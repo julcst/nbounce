@@ -1,4 +1,3 @@
-
 use std::sync::Arc;
 
 use winit::{
@@ -34,45 +33,42 @@ impl<T: App> ApplicationHandler for AppHandler<T> {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
-        let app = self.app.as_mut().unwrap();
-
-        if window_id == app.window().id() {
-            app.handle_input(&event);
-            match event {
-                WindowEvent::CloseRequested | WindowEvent::KeyboardInput {
-                    event:
-                        KeyEvent {
-                            state: ElementState::Pressed,
-                            physical_key: PhysicalKey::Code(KeyCode::Escape),
-                            ..
-                        },
-                    ..
-                } => {
-                    event_loop.exit()
-                },
-                WindowEvent::Resized(new_size) => {
-                    app.resize(new_size)
-                }
-                WindowEvent::RedrawRequested => {
-                    app.update();
-                    match app.render() {
-                        Ok(_) => {}
-                        // Reconfigure the surface if lost
-                        Err(wgpu::SurfaceError::Lost) => app.resize(app.window().inner_size()),
-                        // The system is out of memory, we should probably quit
-                        Err(wgpu::SurfaceError::OutOfMemory) => event_loop.exit(),
-                        // All other errors (Outdated, Timeout) should be resolved by the next frame
-                        Err(e) => error!("{:?}", e),
+        if let Some(app) = self.app.as_mut() {
+            if window_id == app.window().id() {
+                app.handle_input(&event);
+                match event {
+                    WindowEvent::CloseRequested | WindowEvent::KeyboardInput {
+                        event:
+                            KeyEvent {
+                                state: ElementState::Pressed,
+                                physical_key: PhysicalKey::Code(KeyCode::Escape),
+                                ..
+                            },
+                        ..
+                    } => {
+                        event_loop.exit()
+                    },
+                    WindowEvent::Resized(new_size) => {
+                        app.resize(new_size);
+                        app.window().request_redraw();
                     }
+                    WindowEvent::RedrawRequested => {
+                        app.update();
+                        match app.render() {
+                            Ok(_) => {}
+                            // Reconfigure the surface if lost
+                            Err(wgpu::SurfaceError::Lost) => app.resize(app.window().inner_size()),
+                            // The system is out of memory, we should probably quit
+                            Err(wgpu::SurfaceError::OutOfMemory) => event_loop.exit(),
+                            // All other errors (Outdated, Timeout) should be resolved by the next frame
+                            Err(e) => error!("{:?}", e),
+                        }
+                        app.window().request_redraw();
+                    }
+                    _ => (),
                 }
-                _ => (),
             }
         }
-    }
-
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        let app = self.app.as_mut().unwrap();
-        app.window().request_redraw();
     }
 }
 
@@ -212,5 +208,83 @@ impl ImGuiContext {
         self.renderer
             .render(self.ctx.render(), &wgpu.queue, &wgpu.device, render_pass)
             .expect("ImGui Rendering failed")
+    }
+}
+
+pub struct PerformanceMetrics<const BUFFER_SIZE: usize> {
+    last_frame: Option<std::time::Instant>,
+    curr_frame_time: std::time::Duration,
+    time_since_start: std::time::Duration,
+    // Ring buffer of frame times
+    frame_time_buffer: [std::time::Duration; BUFFER_SIZE],
+    idx: usize,
+    n_frames: usize,
+    summed_frame_time: std::time::Duration,
+}
+
+impl<const BUFFER_SIZE: usize> Default for PerformanceMetrics<BUFFER_SIZE>{
+    fn default() -> Self {
+        Self {
+            last_frame: None,
+            curr_frame_time: std::time::Duration::default(),
+            time_since_start: std::time::Duration::default(),
+            frame_time_buffer: [std::time::Duration::default(); BUFFER_SIZE],
+            idx: 0,
+            n_frames: 0,
+            summed_frame_time: std::time::Duration::default(),
+        }
+    }
+}
+
+impl<const BUFFER_SIZE: usize> PerformanceMetrics<BUFFER_SIZE> {
+    pub fn next_frame(&mut self) {
+        match self.last_frame {
+            None => {
+                self.last_frame = Some(std::time::Instant::now());
+                return;
+            }
+            Some(last_frame) => {
+                let now = std::time::Instant::now();
+                self.curr_frame_time = now.duration_since(last_frame);
+                self.last_frame = Some(now);
+                self.time_since_start += self.curr_frame_time;
+
+                // Update sum
+                self.summed_frame_time += self.curr_frame_time;
+                if self.n_frames < BUFFER_SIZE {
+                    self.n_frames += 1;
+                } else {
+                    self.summed_frame_time -= self.frame_time_buffer[self.idx];
+                }
+
+                // Update ring buffer
+                self.frame_time_buffer[self.idx] = self.curr_frame_time;
+                self.idx = (self.idx + 1) % BUFFER_SIZE;
+            }
+        }
+    }
+
+    pub fn pause(&mut self) {
+        self.last_frame = None;
+    }
+
+    pub fn time_since_start(&self) -> std::time::Duration {
+        self.time_since_start
+    }
+
+    pub fn avg_frame_time(&self) -> std::time::Duration {
+        self.summed_frame_time.checked_div(self.n_frames as u32).unwrap_or_default()
+    }
+
+    pub fn curr_frame_time(&self) -> std::time::Duration {
+        self.curr_frame_time
+    }
+
+    pub fn avg_frame_rate(&self) -> f32 {
+        1.0 / self.avg_frame_time().as_secs_f32()
+    }
+
+    pub fn curr_frame_rate(&self) -> f32 {
+        1.0 / self.curr_frame_time.as_secs_f32()
     }
 }

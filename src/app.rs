@@ -1,7 +1,8 @@
-use std::{sync::Arc, time::Instant};
+use std::sync::Arc;
+
 use winit::window::Window;
 
-use crate::backend::{App, ImGuiContext, WGPUContext};
+use crate::common::{App, ImGuiContext, PerformanceMetrics, WGPUContext};
 
 const CLEAR_COLOR: wgpu::Color = wgpu::Color {
     r: 0.1,
@@ -14,7 +15,7 @@ pub struct MainApp {
     wgpu: WGPUContext,
     imgui: ImGuiContext,
     window: Arc<Window>,
-    last_frame: Instant,
+    metrics: PerformanceMetrics<120>,
 }
 
 impl App for MainApp {
@@ -26,7 +27,7 @@ impl App for MainApp {
             wgpu,
             imgui,
             window,
-            last_frame: Instant::now(),
+            metrics: PerformanceMetrics::default(),
         }
     }
 
@@ -39,11 +40,9 @@ impl App for MainApp {
     }
 
     fn update(&mut self) {
-        let now = Instant::now();
-        let delta = now.duration_since(self.last_frame);
-        self.last_frame = now;
+        self.metrics.next_frame();
 
-        self.imgui.update(delta);
+        self.imgui.update(self.metrics.curr_frame_time());
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
@@ -56,6 +55,8 @@ impl App for MainApp {
                 .build(|| {
                     ui.text("Hello world!");
                     ui.text("This...is...imgui-rs on WGPU!");
+                    ui.text(format!("Frametime: {:.2?} ({:.2?})", self.metrics.avg_frame_time(), self.metrics.curr_frame_time()));
+                    ui.text(format!("FPS: {:.2?} ({:.2?})", self.metrics.avg_frame_rate(), self.metrics.curr_frame_rate()));
                     ui.separator();
                     if ui.button("Click me!") {
                         self.window.set_title("Test");
