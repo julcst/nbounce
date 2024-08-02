@@ -115,7 +115,7 @@ impl WGPUContext {
             format: wgpu::TextureFormat::Bgra8UnormSrgb, // TODO: Use Rgba16Float, but it's not supported with imgui-wgpu
             width: size.width,
             height: size.height,
-            present_mode: wgpu::PresentMode::AutoVsync,
+            present_mode: wgpu::PresentMode::AutoNoVsync,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,

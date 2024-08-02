@@ -4,6 +4,8 @@ use winit::window::Window;
 
 use crate::common::{App, ImGuiContext, PerformanceMetrics, WGPUContext};
 
+use crate::triangle_pipeline::TrianglePipeline;
+
 const CLEAR_COLOR: wgpu::Color = wgpu::Color {
     r: 0.1,
     g: 0.2,
@@ -16,18 +18,21 @@ pub struct MainApp {
     imgui: ImGuiContext,
     window: Arc<Window>,
     metrics: PerformanceMetrics<120>,
+    pipeline: TrianglePipeline,
 }
 
 impl App for MainApp {
     async fn new(window: Arc<Window>) -> Self {
         let wgpu = WGPUContext::new(Arc::clone(&window)).await;
         let imgui = ImGuiContext::new(Arc::clone(&window), &wgpu);
+        let pipeline = TrianglePipeline::new(&wgpu);
 
         Self {
             wgpu,
             imgui,
             window,
             metrics: PerformanceMetrics::default(),
+            pipeline,
         }
     }
 
@@ -43,27 +48,27 @@ impl App for MainApp {
         self.metrics.next_frame();
 
         self.imgui.update(self.metrics.curr_frame_time());
+        let ui = self.imgui.frame(&self.window);
+
+        ui.window("Performance Metrics")
+            .title_bar(false)
+            .size([1.0, 1.0], imgui::Condition::FirstUseEver)
+            .position([0.0, 0.0], imgui::Condition::FirstUseEver)
+            .always_auto_resize(true)
+            .movable(false)
+            .no_inputs()
+            .build(|| {
+                ui.text(format!("{:.2?} ({:.2?}) {:.2?} ({:.2?}) {}x{}",
+                    self.metrics.avg_frame_time(),
+                    self.metrics.curr_frame_time(),
+                    self.metrics.avg_frame_rate(),
+                    self.metrics.curr_frame_rate(),
+                    self.window.inner_size().width,
+                    self.window.inner_size().height));
+            });
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
-        
-        let ui = self.imgui.frame(&self.window);
-        {
-            let window = ui.window("Hello world");
-            window
-                .size([300.0, 100.0], imgui::Condition::FirstUseEver)
-                .build(|| {
-                    ui.text("Hello world!");
-                    ui.text("This...is...imgui-rs on WGPU!");
-                    ui.text(format!("Frametime: {:.2?} ({:.2?})", self.metrics.avg_frame_time(), self.metrics.curr_frame_time()));
-                    ui.text(format!("FPS: {:.2?} ({:.2?})", self.metrics.avg_frame_rate(), self.metrics.curr_frame_rate()));
-                    ui.separator();
-                    if ui.button("Click me!") {
-                        self.window.set_title("Test");
-                    }
-                });
-        }
-
         // TODO: Call prepare_render here
 
         let frame = self.wgpu.surface.get_current_texture()?;
@@ -88,13 +93,12 @@ impl App for MainApp {
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
-
+            self.pipeline.render(&mut rpass);
             self.imgui.render(&self.wgpu, &mut rpass);
         }
     
         self.wgpu.queue.submit(Some(encoder.finish()));
         frame.present();
-
         Ok(())
     }
     
