@@ -4,28 +4,21 @@ use winit::window::Window;
 
 use crate::common::{App, ImGuiContext, PerformanceMetrics, WGPUContext};
 
-use crate::triangle_pipeline::TrianglePipeline;
-
-const CLEAR_COLOR: wgpu::Color = wgpu::Color {
-    r: 0.1,
-    g: 0.2,
-    b: 0.3,
-    a: 1.0,
-};
+use crate::triangle_renderer::TriangleRenderer;
 
 pub struct MainApp {
     wgpu: WGPUContext,
     imgui: ImGuiContext,
     window: Arc<Window>,
     metrics: PerformanceMetrics<120>,
-    pipeline: TrianglePipeline,
+    pipeline: TriangleRenderer,
 }
 
 impl App for MainApp {
     async fn new(window: Arc<Window>) -> Self {
         let wgpu = WGPUContext::new(Arc::clone(&window)).await;
         let imgui = ImGuiContext::new(Arc::clone(&window), &wgpu);
-        let pipeline = TrianglePipeline::new(&wgpu);
+        let pipeline = TriangleRenderer::new(&wgpu);
 
         Self {
             wgpu,
@@ -85,7 +78,7 @@ impl App for MainApp {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(CLEAR_COLOR),
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                         store: wgpu::StoreOp::Store,
                     },
                 })],

@@ -1,10 +1,10 @@
 use crate::common::WGPUContext;
 
-pub struct TrianglePipeline {
+pub struct TriangleRenderer {
     pipeline: wgpu::RenderPipeline,
 }
 
-impl TrianglePipeline {
+impl TriangleRenderer {
     pub fn new(wgpu: &WGPUContext) -> Self {
         let shader = wgpu.device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
 
@@ -49,6 +49,7 @@ impl TrianglePipeline {
                 alpha_to_coverage_enabled: false,
             },
             multiview: None,
+            cache: None,
         });
 
         Self { pipeline }

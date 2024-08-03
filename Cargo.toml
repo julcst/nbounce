@@ -5,17 +5,20 @@ authors = ["Julian C. Stamm <mail@julcs.com>"]
 edition = "2021"
 
 [dependencies]
+bytemuck = "1.16.3"
 env_logger = "0.11.5"
 glam = "0.28.0"
 gltf = "1.4.1"
 image = "0.25.2"
 imgui = "0.12.0"
+imgui-winit-support = "0.12.0"
 imgui-wgpu = "0.24.0"
 log = "0.4.22"
 pollster = "0.3.0"
 pretty_env_logger = "0.5.0"
-wgpu = "0.20.1"
+wgpu = "22.1.0"
 winit = "0.30.4"
 
 [patch.crates-io]
-imgui-wgpu = { git = "https://github.com/benmkw/imgui-wgpu-rs.git", branch = "wgpu020" }
+imgui-wgpu = { git = "https://github.com/julcst/imgui-wgpu-rs.git" }
+imgui-winit-support = { git = "https://github.com/julcst/imgui-winit-support.git" }

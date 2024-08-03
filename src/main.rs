@@ -1,7 +1,6 @@
 mod app;
 mod common;
-mod imgui_winit_support;
-mod triangle_pipeline;
+mod triangle_renderer;
 
 use app::MainApp;
 use winit::event_loop::{ControlFlow, EventLoop};
