@@ -5,9 +5,9 @@ authors = ["Julian C. Stamm <mail@julcs.com>"]
 edition = "2021"
 
 [dependencies]
-bytemuck = "1.16.3"
+bytemuck = { version = "1.16.3", features = ["derive"] }
 env_logger = "0.11.5"
-glam = "0.28.0"
+glam = { version = "0.28.0", features = ["bytemuck"] }
 gltf = "1.4.1"
 image = "0.25.2"
 imgui = "0.12.0"

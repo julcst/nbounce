@@ -1,5 +1,6 @@
 struct VertexOutput {
-    @builtin(position) clip_position: vec4f,
+    @builtin(position) position: vec4f,
+    @location(0) texcoord: vec2f,
 };
 
 fn fullscreen_triangle(i: u32) -> vec4f {
@@ -21,11 +22,12 @@ fn vs_main(
     @builtin(vertex_index) in_vertex_index: u32,
 ) -> VertexOutput {
     var out: VertexOutput;
-    out.clip_position = fullscreen_triangle(in_vertex_index);
+    out.position = fullscreen_triangle(in_vertex_index);
+    out.texcoord = out.position.xy * 0.5 + 0.5;
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4f {
-    return vec4f(0.3, 0.2, 0.1, 1.0);
+    return vec4f(in.texcoord, 0.5, 1.0);
 }

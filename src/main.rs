@@ -1,6 +1,7 @@
 mod app;
 mod common;
-mod triangle_renderer;
+mod fullscreen;
+mod mesh_renderer;
 
 use app::MainApp;
 use winit::event_loop::{ControlFlow, EventLoop};

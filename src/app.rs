@@ -4,28 +4,32 @@ use winit::window::Window;
 
 use crate::common::{App, ImGuiContext, PerformanceMetrics, WGPUContext};
 
-use crate::triangle_renderer::TriangleRenderer;
+use crate::fullscreen::TriangleRenderer;
+use crate::mesh_renderer::MeshRenderer;
 
 pub struct MainApp {
     wgpu: WGPUContext,
     imgui: ImGuiContext,
     window: Arc<Window>,
     metrics: PerformanceMetrics<120>,
-    pipeline: TriangleRenderer,
+    fullscreen_renderer: TriangleRenderer,
+    mesh_renderer: MeshRenderer,
 }
 
 impl App for MainApp {
     async fn new(window: Arc<Window>) -> Self {
         let wgpu = WGPUContext::new(Arc::clone(&window)).await;
         let imgui = ImGuiContext::new(Arc::clone(&window), &wgpu);
-        let pipeline = TriangleRenderer::new(&wgpu);
+        let fullscreen_renderer = TriangleRenderer::new(&wgpu);
+        let mesh_renderer = MeshRenderer::new(&wgpu);
 
         Self {
             wgpu,
             imgui,
             window,
             metrics: PerformanceMetrics::default(),
-            pipeline,
+            fullscreen_renderer,
+            mesh_renderer,
         }
     }
 
@@ -86,7 +90,8 @@ impl App for MainApp {
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
-            self.pipeline.render(&mut rpass);
+            self.fullscreen_renderer.render(&mut rpass);
+            self.mesh_renderer.render(&mut rpass);
             self.imgui.render(&self.wgpu, &mut rpass);
         }
     
