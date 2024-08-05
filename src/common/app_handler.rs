@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
-use winit::{application::ApplicationHandler, dpi::PhysicalSize, event::{ElementState, KeyEvent, WindowEvent}, event_loop::ActiveEventLoop, keyboard::{KeyCode, PhysicalKey}, window::{Window, WindowId}};
+use winit::{application::ApplicationHandler, dpi::PhysicalSize, event::{DeviceEvent, DeviceId, ElementState, KeyEvent, WindowEvent}, event_loop::ActiveEventLoop, keyboard::{KeyCode, PhysicalKey}, window::{Window, WindowId}};
 
 pub trait App {
     async fn new(window: Arc<Window>) -> Self;
     fn window(&self) -> &Window;
     fn resize(&mut self, new_size: PhysicalSize<u32>);
-    fn handle_input(&mut self, event: &WindowEvent);
+    fn window_event(&mut self, event: &WindowEvent);
+    fn device_event(&mut self, event: &DeviceEvent);
     fn update(&mut self);
     fn render(&mut self) -> Result<(), wgpu::SurfaceError>;
 }
@@ -30,7 +31,7 @@ impl<T: App> ApplicationHandler for AppHandler<T> {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
         if let Some(app) = self.app.as_mut() {
             if window_id == app.window().id() {
-                app.handle_input(&event);
+                app.window_event(&event);
                 match event {
                     WindowEvent::CloseRequested | WindowEvent::KeyboardInput {
                         event:
@@ -63,6 +64,12 @@ impl<T: App> ApplicationHandler for AppHandler<T> {
                     _ => (),
                 }
             }
+        }
+    }
+
+    fn device_event(&mut self, _: &ActiveEventLoop, _: DeviceId, event: DeviceEvent) {
+        if let Some(app) = self.app.as_mut() {
+            app.device_event(&event);
         }
     }
 }

@@ -8,24 +8,12 @@ pub struct MeshRenderer {
     mesh: Mesh,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
-    camera_buffer: wgpu::Buffer,
-    camera_bind_group: wgpu::BindGroup,
-    camera: CameraController,
     pipeline: wgpu::RenderPipeline,
 }
 
 impl MeshRenderer {
     pub fn new(wgpu: &WGPUContext) -> Self {
         let shader = wgpu.device.create_shader_module(wgpu::include_wgsl!("mesh.wgsl"));
-
-        let mut camera = CameraController::default();
-        camera.update();
-
-        let camera_buffer = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Camera Buffer"),
-            contents: camera.data_as_u8(),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
 
         let camera_bind_group_layout = wgpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Camera Bind Group Layout"),
@@ -41,15 +29,6 @@ impl MeshRenderer {
                     count: None,
                 },
             ],
-        });
-
-        let camera_bind_group = wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Camera Bind Group"),
-            layout: &camera_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_buffer.as_entire_binding(),
-            }],
         });
 
         let pipeline_layout = wgpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -123,16 +102,13 @@ impl MeshRenderer {
             mesh,
             vertex_buffer,
             index_buffer,
-            camera,
-            camera_buffer,
-            camera_bind_group,
             pipeline,
         }
     }
 
-    pub fn render<'r>(&'r self, render_pass: &mut wgpu::RenderPass<'r>) {
+    pub fn render<'r>(&'r self, render_pass: &mut wgpu::RenderPass<'r>, camera: &CameraController) {
         render_pass.set_pipeline(&self.pipeline);
-        render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+        render_pass.set_bind_group(0, camera.bind_group(), &[]);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         render_pass.draw_indexed(0..self.mesh.num_indices(), 0, 0..1);

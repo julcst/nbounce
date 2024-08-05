@@ -31,8 +31,8 @@ fn vs_main(
 }
 
 fn checkerboard(texcoord: vec4f) -> vec4f {
-    let c = floor(texcoord.xy * 8.0);
-    let color = (c.x + c.y) % 2.0;
+    let c = floor(texcoord.xy * 15.0);
+    let color = (c.x + c.y) % 2.0 * 0.5 + 0.25;
     return vec4f(color, color, color, 1.0);
 }
 

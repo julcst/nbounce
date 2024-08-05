@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use winit::window::Window;
 
-use crate::common::{App, ImGuiContext, PerformanceMetrics, WGPUContext};
+use crate::common::{App, CameraController, ImGuiContext, PerformanceMetrics, WGPUContext};
 
 use crate::fullscreen::TriangleRenderer;
 use crate::mesh_renderer::MeshRenderer;
@@ -14,6 +14,7 @@ pub struct MainApp {
     metrics: PerformanceMetrics<120>,
     fullscreen_renderer: TriangleRenderer,
     mesh_renderer: MeshRenderer,
+    camera: CameraController,
 }
 
 impl App for MainApp {
@@ -22,6 +23,7 @@ impl App for MainApp {
         let imgui = ImGuiContext::new(Arc::clone(&window), &wgpu);
         let fullscreen_renderer = TriangleRenderer::new(&wgpu);
         let mesh_renderer = MeshRenderer::new(&wgpu);
+        let camera = CameraController::new(&wgpu);
 
         Self {
             wgpu,
@@ -30,6 +32,7 @@ impl App for MainApp {
             metrics: PerformanceMetrics::default(),
             fullscreen_renderer,
             mesh_renderer,
+            camera,
         }
     }
 
@@ -63,6 +66,8 @@ impl App for MainApp {
                     self.window.inner_size().width,
                     self.window.inner_size().height));
             });
+
+        self.camera.update(&self.wgpu);
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
@@ -91,7 +96,7 @@ impl App for MainApp {
                 timestamp_writes: None,
             });
             self.fullscreen_renderer.render(&mut rpass);
-            self.mesh_renderer.render(&mut rpass);
+            self.mesh_renderer.render(&mut rpass, &self.camera);
             self.imgui.render(&self.wgpu, &mut rpass);
         }
     
@@ -100,7 +105,12 @@ impl App for MainApp {
         Ok(())
     }
     
-    fn handle_input(&mut self, event: &winit::event::WindowEvent) {
+    fn window_event(&mut self, event: &winit::event::WindowEvent) {
         self.imgui.handle_input(&self.window, event);
+        self.camera.window_event(event);
+    }
+
+    fn device_event(&mut self, event: &winit::event::DeviceEvent) {
+        self.camera.device_event(event);
     }
 }
