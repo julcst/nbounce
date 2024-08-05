@@ -45,6 +45,7 @@ impl App for MainApp {
 
     fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         self.wgpu.resize(new_size);
+        self.depth_texture = Texture::create_depth_texture(&self.wgpu);
     }
 
     fn update(&mut self) {
