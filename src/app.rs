@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use winit::window::Window;
 
-use crate::common::{App, CameraController, ImGuiContext, PerformanceMetrics, WGPUContext};
+use crate::common::{App, CameraController, ImGuiContext, PerformanceMetrics, Texture, WGPUContext};
 
 use crate::fullscreen::TriangleRenderer;
 use crate::mesh_renderer::MeshRenderer;
@@ -11,6 +11,7 @@ pub struct MainApp {
     wgpu: WGPUContext,
     imgui: ImGuiContext,
     window: Arc<Window>,
+    depth_texture: Texture,
     metrics: PerformanceMetrics<120>,
     fullscreen_renderer: TriangleRenderer,
     mesh_renderer: MeshRenderer,
@@ -24,11 +25,13 @@ impl App for MainApp {
         let fullscreen_renderer = TriangleRenderer::new(&wgpu);
         let mesh_renderer = MeshRenderer::new(&wgpu);
         let camera = CameraController::new(&wgpu);
+        let depth_texture = Texture::create_depth_texture(&wgpu);
 
         Self {
             wgpu,
             imgui,
             window,
+            depth_texture,
             metrics: PerformanceMetrics::default(),
             fullscreen_renderer,
             mesh_renderer,
@@ -91,7 +94,14 @@ impl App for MainApp {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: self.depth_texture.view(),
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });

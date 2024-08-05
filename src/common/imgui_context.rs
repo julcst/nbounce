@@ -37,6 +37,7 @@ impl ImGuiContext {
         // Set up dear imgui wgpu renderer
         let renderer_config = imgui_wgpu::RendererConfig {
             texture_format: wgpu.config.format,
+            depth_format: Some(wgpu::TextureFormat::Depth32Float),
             font_atlas_format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
             ..Default::default()
         };
