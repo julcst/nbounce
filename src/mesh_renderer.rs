@@ -6,8 +6,6 @@ use crate::common::{CameraController, Mesh, Vertex, WGPUContext};
 
 pub struct MeshRenderer {
     mesh: Mesh,
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
     pipeline: wgpu::RenderPipeline,
 }
 
@@ -83,24 +81,10 @@ impl MeshRenderer {
             cache: None,
         });
 
-        let mesh = Mesh::new(Path::new("assets/bunny.glb")).expect("Could not load mesh");
-
-        let vertex_buffer = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
-            contents: mesh.vertices_as_u8(),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-
-        let index_buffer = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
-            contents: mesh.indices_as_u8(),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        let mesh = Mesh::new(wgpu, Path::new("assets/bunny.glb")).expect("Could not load mesh");
 
         Self {
             mesh,
-            vertex_buffer,
-            index_buffer,
             pipeline,
         }
     }
@@ -108,8 +92,6 @@ impl MeshRenderer {
     pub fn render<'r>(&'r self, render_pass: &mut wgpu::RenderPass<'r>, camera: &CameraController) {
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, camera.bind_group(), &[]);
-        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        render_pass.draw_indexed(0..self.mesh.num_indices(), 0, 0..1);
+        self.mesh.draw(render_pass);
     }
 }
