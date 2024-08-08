@@ -4,17 +4,20 @@ use winit::window::Window;
 
 use crate::common::{App, CameraController, ImGuiContext, PerformanceMetrics, Texture, WGPUContext};
 
-use crate::fullscreen::TriangleRenderer;
+use crate::fullscreen_renderer::FullscreenRenderer;
 use crate::mesh_renderer::MeshRenderer;
+use crate::raytracer::{self, Raytracer};
 
 pub struct MainApp {
     wgpu: WGPUContext,
     imgui: ImGuiContext,
     window: Arc<Window>,
     depth_texture: Texture,
+    compute_texture: Texture,
     metrics: PerformanceMetrics<120>,
-    fullscreen_renderer: TriangleRenderer,
+    fullscreen_renderer: FullscreenRenderer,
     mesh_renderer: MeshRenderer,
+    raytracer: Raytracer,
     camera: CameraController,
 }
 
@@ -22,20 +25,24 @@ impl App for MainApp {
     async fn new(window: Arc<Window>) -> Self {
         let wgpu = WGPUContext::new(Arc::clone(&window)).await;
         let imgui = ImGuiContext::new(Arc::clone(&window), &wgpu);
-        let fullscreen_renderer = TriangleRenderer::new(&wgpu);
         let mesh_renderer = MeshRenderer::new(&wgpu);
         let camera = CameraController::new(&wgpu);
-        let depth_texture = Texture::create_depth_texture(&wgpu);
+        let depth_texture = Texture::create_depth(&wgpu);
+        let compute_texture = Texture::create_fullscreen(&wgpu, wgpu::TextureFormat::Rgba16Float);
+        let fullscreen_renderer = FullscreenRenderer::new(&wgpu, &compute_texture);
+        let raytracer = Raytracer::new(&wgpu, &compute_texture);
 
         Self {
             wgpu,
             imgui,
             window,
             depth_texture,
+            compute_texture,
             metrics: PerformanceMetrics::default(),
             fullscreen_renderer,
             mesh_renderer,
             camera,
+            raytracer,
         }
     }
 
@@ -45,7 +52,7 @@ impl App for MainApp {
 
     fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         self.wgpu.resize(new_size);
-        self.depth_texture = Texture::create_depth_texture(&self.wgpu);
+        self.depth_texture = Texture::create_depth(&self.wgpu);
     }
 
     fn update(&mut self) {
@@ -83,6 +90,8 @@ impl App for MainApp {
         let mut encoder = self.wgpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
         });
+
+        self.raytracer.dispatch(&mut encoder);
 
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

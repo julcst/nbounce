@@ -31,7 +31,12 @@ impl WGPUContext {
 
         let (device, queue) = adapter
             .request_device(
-                &wgpu::DeviceDescriptor::default(),
+                &wgpu::DeviceDescriptor {
+                    label: Some("Device"),
+                    required_features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+                    required_limits: wgpu::Limits::default(),
+                    memory_hints: wgpu::MemoryHints::default(),
+                },
                 None,
             )
             .await

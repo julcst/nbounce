@@ -3,6 +3,12 @@ struct VertexOutput {
     @location(0) texcoord: vec2f,
 };
 
+@group(0) @binding(0)
+var t: texture_2d<f32>;
+
+@group(0) @binding(1)
+var s: sampler;
+
 fn fullscreen_triangle(i: u32) -> vec4f {
     switch (i) {
         case 0u, default: {
@@ -29,5 +35,5 @@ fn vs_main(
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4f {
-    return vec4f(in.texcoord, 0.5, 1.0);
+    return textureSample(t, s, in.texcoord);
 }

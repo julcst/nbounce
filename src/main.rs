@@ -1,7 +1,8 @@
 mod app;
 mod common;
-mod fullscreen;
+mod fullscreen_renderer;
 mod mesh_renderer;
+mod raytracer;
 
 use app::MainApp;
 use winit::event_loop::{ControlFlow, EventLoop};

@@ -4,7 +4,7 @@ use gltf;
 use glam::{self, Vec2, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
-use super::WGPUContext;
+use super::{Texture, WGPUContext};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::NoUninit)]
@@ -46,6 +46,7 @@ pub struct Mesh {
     indices: Vec<u32>,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
+    //texture: Texture,
 }
 
 #[derive(Debug)]
@@ -108,13 +109,16 @@ impl Mesh {
 
     fn append_gltf_to_vec(path: &Path, vertices: &mut Vec<Vertex>, indices: &mut Vec<u32>) -> Result<(), MeshError> {
         let time = std::time::Instant::now();
-        let (gltf, buffers, _images) = gltf::import(path)?;
+        let (gltf, buffers, images) = gltf::import(path)?;
         log::info!("Loaded {:?} in {:?}", path, time.elapsed());
 
         let time = std::time::Instant::now();
         for mesh in gltf.meshes() {
             log::info!("Processing {:?} primitives in mesh {:?}", mesh.primitives().len(), mesh.name());
             for primitive in mesh.primitives() {
+                // if let texture = primitive.material().pbr_metallic_roughness().base_color_texture() {
+                //     let texture = Texture::from_gltf(image, &images, &WGPUContext::new());
+                // }
                 if primitive.mode() != gltf::mesh::Mode::Triangles {
                     return Err(MeshError::NotTriangleList);
                 }

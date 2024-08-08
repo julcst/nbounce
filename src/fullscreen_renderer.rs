@@ -1,16 +1,54 @@
-use crate::common::WGPUContext;
+use crate::common::{Texture, WGPUContext};
 
-pub struct TriangleRenderer {
+pub struct FullscreenRenderer {
     pipeline: wgpu::RenderPipeline,
+    bind_group: wgpu::BindGroup,
 }
 
-impl TriangleRenderer {
-    pub fn new(wgpu: &WGPUContext) -> Self {
+impl FullscreenRenderer {
+    pub fn new(wgpu: &WGPUContext, texture: &Texture) -> Self {
         let shader = wgpu.device.create_shader_module(wgpu::include_wgsl!("fullscreen.wgsl"));
+
+        let bind_group_layout = wgpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Blit Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ]
+        });
+
+        let bind_group = wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Blit Bind Group"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&texture.view()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&texture.sampler()),
+                },
+            ]
+        });
 
         let pipeline_layout = wgpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Fullscreen Pipeline Layout"),
-            bind_group_layouts: &[],
+            bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -58,11 +96,12 @@ impl TriangleRenderer {
             cache: None,
         });
 
-        Self { pipeline }
+        Self { pipeline, bind_group }
     }
 
     pub fn render<'r>(&'r self, render_pass: &mut wgpu::RenderPass<'r>) {
         render_pass.set_pipeline(&self.pipeline);
+        render_pass.set_bind_group(0, &self.bind_group, &[]);
         render_pass.draw(0..3, 0..1);
     }
 }
