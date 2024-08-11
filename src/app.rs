@@ -4,18 +4,17 @@ use winit::window::Window;
 
 use crate::common::{App, CameraController, ImGuiContext, PerformanceMetrics, Texture, WGPUContext};
 
-use crate::fullscreen_renderer::FullscreenRenderer;
+use crate::blit_renderer::BlitRenderer;
 use crate::mesh_renderer::MeshRenderer;
-use crate::raytracer::{self, Raytracer};
+use crate::raytracer::Raytracer;
 
 pub struct MainApp {
     wgpu: WGPUContext,
     imgui: ImGuiContext,
     window: Arc<Window>,
     depth_texture: Texture,
-    compute_texture: Texture,
     metrics: PerformanceMetrics<120>,
-    fullscreen_renderer: FullscreenRenderer,
+    fullscreen_renderer: BlitRenderer,
     mesh_renderer: MeshRenderer,
     raytracer: Raytracer,
     camera: CameraController,
@@ -28,16 +27,14 @@ impl App for MainApp {
         let mesh_renderer = MeshRenderer::new(&wgpu);
         let camera = CameraController::new(&wgpu);
         let depth_texture = Texture::create_depth(&wgpu);
-        let compute_texture = Texture::create_fullscreen(&wgpu, wgpu::TextureFormat::Rgba16Float);
-        let fullscreen_renderer = FullscreenRenderer::new(&wgpu, &compute_texture);
-        let raytracer = Raytracer::new(&wgpu, &compute_texture);
+        let raytracer = Raytracer::new(&wgpu);
+        let fullscreen_renderer = BlitRenderer::new(&wgpu, raytracer.output_texture());
 
         Self {
             wgpu,
             imgui,
             window,
             depth_texture,
-            compute_texture,
             metrics: PerformanceMetrics::default(),
             fullscreen_renderer,
             mesh_renderer,
@@ -51,8 +48,14 @@ impl App for MainApp {
     }
 
     fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+        if new_size.width == self.wgpu.config.width && new_size.height == self.wgpu.config.height {
+            log::info!("Skipping unnecessary resize");
+            return;
+        }
         self.wgpu.resize(new_size);
         self.depth_texture = Texture::create_depth(&self.wgpu);
+        self.raytracer.resize(&self.wgpu);
+        self.fullscreen_renderer.set_texture(&self.wgpu, self.raytracer.output_texture());
     }
 
     fn update(&mut self) {

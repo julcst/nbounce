@@ -27,7 +27,9 @@ impl WGPUContext {
             .await
             .expect("Failed to find an appropriate adapter");
 
-        log::info!("Adapter: {:?}", adapter.get_info());
+        log::info!("Adapter: {:#?}", adapter.get_info());
+        log::info!("Supported features: {:#?}", adapter.features());
+        log::info!("Supported limits: {:#?}", adapter.limits());
 
         let (device, queue) = adapter
             .request_device(

@@ -1,18 +1,25 @@
-use wgpu::core::pipeline;
+use std::collections::HashMap;
+
+use glam::{uvec2, Vec3Swizzles};
 
 use crate::common::{Texture, WGPUContext};
 
 pub struct Raytracer {
     pipeline: wgpu::ComputePipeline,
     bind_group: wgpu::BindGroup,
+    output: Texture,
 }
 
 impl Raytracer {
-    pub fn new(wgpu: &WGPUContext, output: &Texture) -> Self {
+    const COMPUTE_SIZE: u32 = 16;
+
+    pub fn new(wgpu: &WGPUContext) -> Self {
         let module = wgpu.device.create_shader_module(wgpu::include_wgsl!("raytracer.wgsl"));
 
+        let output = Self::create_output_texture(wgpu);
+
         let bind_group_layout = wgpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Blit Layout"),
+            label: Some("Raytracer Output Layout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -28,7 +35,7 @@ impl Raytracer {
         });
 
         let bind_group = wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Blit Bind Group"),
+            label: Some("Raytracer Output Bind Group"),
             layout: &bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -49,11 +56,48 @@ impl Raytracer {
             layout: Some(&layout),
             module: &module,
             entry_point: "main",
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &HashMap::from([
+                    (String::from("COMPUTE_SIZE"), Self::COMPUTE_SIZE as f64)
+                ]),
+                zero_initialize_workgroup_memory: false,
+                vertex_pulling_transform: false,
+            },
             cache: None,
         });
 
-        Self { pipeline, bind_group }
+        Self { pipeline, bind_group, output }
+    }
+
+    fn create_output_texture(wgpu: &WGPUContext) -> Texture {
+        let dim = uvec2(wgpu.config.width, wgpu.config.height).as_vec2() * 0.2;
+        let dim = dim.as_uvec2() / Self::COMPUTE_SIZE * Self::COMPUTE_SIZE;
+
+        let size = wgpu::Extent3d {
+            width: dim.x,
+            height: dim.y,
+            depth_or_array_layers: 1,
+        };
+        Texture::create_texture(wgpu, size, wgpu::TextureFormat::Rgba16Float)
+    }
+
+    pub fn output_texture(&self) -> &Texture {
+        &self.output
+    }
+
+    pub fn resize(&mut self, wgpu: &WGPUContext) {
+        self.output = Self::create_output_texture(wgpu);
+
+        self.bind_group = wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Blit Bind Group"),
+            layout: &self.pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(self.output.view()),
+                },
+            ]
+        });
     }
 
     pub fn dispatch(&self, encoder: &mut wgpu::CommandEncoder) {
@@ -63,6 +107,7 @@ impl Raytracer {
         });
         cpass.set_pipeline(&self.pipeline);
         cpass.set_bind_group(0, &self.bind_group, &[]);
-        cpass.dispatch_workgroups(500, 500, 1);
+        let n_workgroups = self.output.size().xy() / Self::COMPUTE_SIZE;
+        cpass.dispatch_workgroups(n_workgroups.x, n_workgroups.y, 1);
     }
 }

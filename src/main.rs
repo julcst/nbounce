@@ -1,6 +1,6 @@
 mod app;
 mod common;
-mod fullscreen_renderer;
+mod blit_renderer;
 mod mesh_renderer;
 mod raytracer;
 

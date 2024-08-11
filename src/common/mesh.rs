@@ -4,7 +4,7 @@ use gltf;
 use glam::{self, Vec2, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
-use super::{Texture, WGPUContext};
+use super::WGPUContext;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::NoUninit)]
@@ -65,6 +65,21 @@ impl From<gltf::Error> for MeshError {
     }
 }
 
+impl std::fmt::Display for MeshError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            MeshError::Gltf(e) => write!(f, "Gltf error: {}", e),
+            MeshError::MissingPositions => write!(f, "Missing positions"),
+            MeshError::MissingNormals => write!(f, "Missing normals"),
+            MeshError::MissingTexCoords => write!(f, "Missing texcoords"),
+            MeshError::MissingIndices => write!(f, "Missing indices"),
+            MeshError::NotTriangleList => write!(f, "Not a triangle list"),
+        }
+    }
+}
+
+impl std::error::Error for MeshError {}
+
 impl Mesh {
     pub fn new(wgpu: &WGPUContext, path: &Path) -> Result<Self, MeshError> {
         let mut vertices = Vec::new();
@@ -109,7 +124,7 @@ impl Mesh {
 
     fn append_gltf_to_vec(path: &Path, vertices: &mut Vec<Vertex>, indices: &mut Vec<u32>) -> Result<(), MeshError> {
         let time = std::time::Instant::now();
-        let (gltf, buffers, images) = gltf::import(path)?;
+        let (gltf, buffers, _images) = gltf::import(path)?;
         log::info!("Loaded {:?} in {:?}", path, time.elapsed());
 
         let time = std::time::Instant::now();
@@ -119,6 +134,7 @@ impl Mesh {
                 // if let texture = primitive.material().pbr_metallic_roughness().base_color_texture() {
                 //     let texture = Texture::from_gltf(image, &images, &WGPUContext::new());
                 // }
+                log::info!("{:#?}", primitive.material().pbr_metallic_roughness().base_color_texture().unwrap().texture().source().index());
                 if primitive.mode() != gltf::mesh::Mode::Triangles {
                     return Err(MeshError::NotTriangleList);
                 }

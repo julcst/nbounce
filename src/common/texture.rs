@@ -43,15 +43,9 @@ impl Texture {
         Self { texture, view, sampler }
     }
 
-    pub fn create_fullscreen(wgpu: &WGPUContext, format: wgpu::TextureFormat) -> Self {
-        let size = wgpu::Extent3d {
-            width: wgpu.config.width,
-            height: wgpu.config.height,
-            depth_or_array_layers: 1,
-        };
-
+    pub fn create_texture(wgpu: &WGPUContext, size: wgpu::Extent3d, format: wgpu::TextureFormat) -> Self {
         let desc = wgpu::TextureDescriptor {
-            label: Some("Fullscreen Texture"),
+            label: Some("Texture"),
             size,
             mip_level_count: 1,
             sample_count: 1,
@@ -68,14 +62,32 @@ impl Texture {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let sampler = wgpu.device.create_sampler(
-            &wgpu::SamplerDescriptor::default(),
+            &wgpu::SamplerDescriptor {
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            }
         );
 
         Self { texture, view, sampler }
     }
 
-    pub fn from_gltf(wgpu: &WGPUContext, texture: &gltf::Texture, images: &Vec<gltf::image::Data>) -> Self {
-        let image = &images[0];
+    pub fn create_fullscreen(wgpu: &WGPUContext, format: wgpu::TextureFormat) -> Self {
+        let size = wgpu::Extent3d {
+            width: wgpu.config.width,
+            height: wgpu.config.height,
+            depth_or_array_layers: 1,
+        };
+
+        Self::create_texture(wgpu, size, format)
+    }
+
+    pub fn from_gltf(wgpu: &WGPUContext, texture: &gltf::Texture, images: &[gltf::image::Data]) -> Self {
+        let image = &images[texture.source().index()];
 
         let format = match image.format {
             gltf::image::Format::R8 => wgpu::TextureFormat::R8Unorm,
@@ -127,5 +139,10 @@ impl Texture {
 
     pub fn format(&self) -> wgpu::TextureFormat {
         self.texture.format()
+    }
+
+    pub fn size(&self) -> glam::UVec3 {
+        let size = self.texture.size();
+        glam::uvec3(size.width, size.height, size.depth_or_array_layers)
     }
 }

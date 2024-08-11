@@ -1,7 +1,5 @@
 use std::path::Path;
 
-use wgpu::util::DeviceExt;
-
 use crate::common::{CameraController, Mesh, Vertex, WGPUContext};
 
 pub struct MeshRenderer {

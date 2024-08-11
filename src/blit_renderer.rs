@@ -1,13 +1,13 @@
 use crate::common::{Texture, WGPUContext};
 
-pub struct FullscreenRenderer {
+pub struct BlitRenderer {
     pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
 }
 
-impl FullscreenRenderer {
+impl BlitRenderer {
     pub fn new(wgpu: &WGPUContext, texture: &Texture) -> Self {
-        let shader = wgpu.device.create_shader_module(wgpu::include_wgsl!("fullscreen.wgsl"));
+        let shader = wgpu.device.create_shader_module(wgpu::include_wgsl!("blit.wgsl"));
 
         let bind_group_layout = wgpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Blit Layout"),
@@ -37,23 +37,23 @@ impl FullscreenRenderer {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&texture.view()),
+                    resource: wgpu::BindingResource::TextureView(texture.view()),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&texture.sampler()),
+                    resource: wgpu::BindingResource::Sampler(texture.sampler()),
                 },
             ]
         });
 
         let pipeline_layout = wgpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Fullscreen Pipeline Layout"),
+            label: Some("Blit Pipeline Layout"),
             bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
         });
 
         let pipeline = wgpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Fullscreen Pipeline"),
+            label: Some("Blit Pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -97,6 +97,23 @@ impl FullscreenRenderer {
         });
 
         Self { pipeline, bind_group }
+    }
+
+    pub fn set_texture(&mut self, wgpu: &WGPUContext, texture: &Texture) {
+        self.bind_group = wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Blit Bind Group"),
+            layout: &self.pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(texture.view()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(texture.sampler()),
+                },
+            ]
+        });
     }
 
     pub fn render<'r>(&'r self, render_pass: &mut wgpu::RenderPass<'r>) {
