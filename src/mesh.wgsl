@@ -1,8 +1,6 @@
 struct CameraData {
-    world_to_view: mat4x4f,
-    view_to_world: mat4x4f,
-    view_to_clip: mat4x4f,
     world_to_clip: mat4x4f,
+    clip_to_world: mat4x4f,
 };
 
 @group(0) @binding(0) var<uniform> camera: CameraData;

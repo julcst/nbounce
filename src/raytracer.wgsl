@@ -1,6 +1,15 @@
 @group(0)
 @binding(0)
-var texture: texture_storage_2d<rgba16float, read_write>;
+var output: texture_storage_2d<rgba16float, read_write>;
+
+struct CameraData {
+    world_to_clip: mat4x4f,
+    clip_to_world: mat4x4f,
+};
+
+@group(1)
+@binding(0)
+var<uniform> camera: CameraData;
 
 const COMPUTE_SIZE = 16.0;
 const PI: f32 = 3.14159265359;
@@ -57,39 +66,50 @@ fn intersect_AABB(ray: Ray, aabb: AABB) -> f32 {
 }
 
 fn generate_ray(id: vec3u) -> Ray {
-    let dim = vec2f(textureDimensions(texture));
-    let uv = (2.0 * vec2f(id.xy) - dim) / dim.y;
-    let direction = normalize(vec3f(uv, 1.0));
+    let dim = vec2f(textureDimensions(output));
+    let uv = 2.0 * vec2f(id.xy) / dim - 1.0;
+
+    // let clip_pos = vec4f(0.0, 0.0, 0.0, 1.0);
+    // let world_pos = camera.clip_to_world * clip_pos;
+    let world_pos = camera.clip_to_world[3]; // Equivalent to the above
+    let pos = world_pos.xyz / world_pos.w;
+
+    let clip_dir = vec4f(-uv, -1.0, 1.0);
+    let world_dir = camera.clip_to_world * clip_dir;
+    let dir = pos - world_dir.xyz / world_dir.w;
+
     return Ray(
-        vec3f(0.0, 0.0, -10.0),
-        direction,
-        1.0 / direction
+        pos,
+        dir,
+        1.0 / dir,
     );
 }
 
 @compute
 @workgroup_size(16, 16)
 fn main(@builtin(global_invocation_id) id: vec3u) {
-    // var color = textureLoad(texture, vec2i(id.xy));
+    // var color = textureLoad(output, vec2i(id.xy));
     let ray = generate_ray(id);
-    let t = intersect_AABB(ray, aabb);
-    textureStore(texture, id.xy, vec4f(t, t, t, 1.0));
+    let t = intersect_AABB(ray, aabb) * 0.01;
+    textureStore(output, id.xy, vec4f(t, t, t, 1.0));
 }
 
-// const MAX_ITERATIONS: u32 = 1024u;
+const MAX_ITERATIONS: u32 = 1024u;
 
-// @compute
-// @workgroup_size(16, 16)
-// fn mandelbrot(@builtin(global_invocation_id) id: vec3u) {
-//     let c = vec2f(id.xy) / vec2f(textureDimensions(texture)) * 3.0 - vec2f(2.25, 1.5); 
-//     var z = c;
-//     var i = 0u;
-//     for (; i < MAX_ITERATIONS; i++) {
-//         z = vec2f(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;
-//         if dot(z, z) > 16.0 {
-//             break;
-//         }
-//     }
-//     let value = f32(i) / f32(MAX_ITERATIONS);
-//     textureStore(texture, id.xy, vec4f(value, value, value, 1.0));
-// }
+@compute
+@workgroup_size(16, 16)
+fn mandelbrot(@builtin(global_invocation_id) id: vec3u) {
+    let dim = vec2f(textureDimensions(output));
+    let uv = (2.0 * vec2f(id.xy) - dim) / dim.y;
+    let c = uv * 1.2 - vec2f(0.7, 0.0); 
+    var z = c;
+    var i = 0u;
+    for (; i < MAX_ITERATIONS; i++) {
+        z = vec2f(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;
+        if dot(z, z) > 16.0 {
+            break;
+        }
+    }
+    let value = f32(i) / f32(MAX_ITERATIONS);
+    textureStore(output, id.xy, vec4f(value, value, value, 1.0));
+}

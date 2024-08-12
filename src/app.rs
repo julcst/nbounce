@@ -94,7 +94,7 @@ impl App for MainApp {
             label: Some("Render Encoder"),
         });
 
-        self.raytracer.dispatch(&mut encoder);
+        self.raytracer.dispatch(&mut encoder, &self.camera);
 
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

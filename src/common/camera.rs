@@ -6,10 +6,8 @@ use super::WGPUContext;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::NoUninit)]
 pub struct CameraData {
-    pub world_to_view: Mat4,
-    pub view_to_world: Mat4,
-    pub view_to_clip: Mat4,
     pub world_to_clip: Mat4,
+    pub clip_to_world: Mat4,
 }
 
 #[derive(Debug)]
@@ -42,7 +40,7 @@ impl CameraController {
             label: Some("Camera Bind Group Layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -103,7 +101,8 @@ impl CameraController {
     }
 
     pub fn move_in_eye_space(&mut self, delta: Vec3) {
-        let cam_delta = self.data.world_to_view.transform_vector3(delta);
+        let world_to_view = self.calc_view_matrix();
+        let cam_delta = world_to_view.transform_vector3(delta);
         self.world_position += cam_delta;
         self.target += cam_delta;
         self.invalidate();
@@ -161,11 +160,10 @@ impl CameraController {
     fn calc_camera_data(&self) -> CameraData {
         let world_to_view = self.calc_view_matrix();
         let view_to_clip = self.calc_projection_matrix();
+        let world_to_clip = view_to_clip * world_to_view;
         CameraData {
-            world_to_view,
-            view_to_world: world_to_view.inverse(),
-            view_to_clip,
-            world_to_clip: view_to_clip * world_to_view,
+            world_to_clip,
+            clip_to_world: world_to_clip.inverse(),
         }
     }
 
