@@ -2,12 +2,13 @@ use std::collections::HashMap;
 
 use glam::{uvec2, Vec3Swizzles};
 
-use crate::common::{CameraController, Texture, WGPUContext};
+use crate::{bvh::BVHBindGroup, common::{CameraController, Mesh, Texture, WGPUContext}};
 
 pub struct Raytracer {
     pipeline: wgpu::ComputePipeline,
     output_group: wgpu::BindGroup,
     output: Texture,
+    bvh: BVHBindGroup,
 }
 
 impl Raytracer {
@@ -61,9 +62,11 @@ impl Raytracer {
             ]
         });
 
+        let bvh = BVHBindGroup::from_mesh(wgpu, &Mesh::new(wgpu, std::path::Path::new("assets/bunny.glb")).unwrap());
+
         let layout = wgpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Raytracer Pipeline Layout"),
-            bind_group_layouts: &[&output_layout, &camera_layout],
+            bind_group_layouts: &[&output_layout, &camera_layout, bvh.layout()],
             push_constant_ranges: &[],
         });
 
@@ -82,7 +85,7 @@ impl Raytracer {
             cache: None,
         });
 
-        Self { pipeline, output_group, output }
+        Self { pipeline, output_group, output, bvh }
     }
 
     fn create_output_texture(wgpu: &WGPUContext) -> Texture {
@@ -124,6 +127,7 @@ impl Raytracer {
         cpass.set_pipeline(&self.pipeline);
         cpass.set_bind_group(0, &self.output_group, &[]);
         cpass.set_bind_group(1, camera.bind_group(), &[]);
+        cpass.set_bind_group(2, self.bvh.bind_group(), &[]);
         let n_workgroups = self.output.size().xy() / Self::COMPUTE_SIZE;
         cpass.dispatch_workgroups(n_workgroups.x, n_workgroups.y, 1);
     }

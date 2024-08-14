@@ -9,9 +9,9 @@ use super::WGPUContext;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::NoUninit)]
 pub struct Vertex {
-    position: Vec4,
-    normal: Vec4,
-    texcoord: Vec4,
+    pub position: Vec4,
+    pub normal: Vec4,
+    pub texcoord: Vec4,
 }
 
 impl Vertex {
@@ -110,6 +110,14 @@ impl Mesh {
         })
     }
 
+    pub fn vertices(&self) -> &[Vertex] {
+        &self.vertices
+    }
+
+    pub fn indices(&self) -> &[u32] {
+        &self.indices
+    }
+
     pub fn vertices_as_u8(&self) -> &[u8] {
         bytemuck::cast_slice(&self.vertices)
     }
@@ -134,7 +142,7 @@ impl Mesh {
                 // if let texture = primitive.material().pbr_metallic_roughness().base_color_texture() {
                 //     let texture = Texture::from_gltf(image, &images, &WGPUContext::new());
                 // }
-                log::info!("{:#?}", primitive.material().pbr_metallic_roughness().base_color_texture().unwrap().texture().source().index());
+                // log::info!("{:#?}", primitive.material().pbr_metallic_roughness().base_color_texture().unwrap().texture().source().index());
                 if primitive.mode() != gltf::mesh::Mode::Triangles {
                     return Err(MeshError::NotTriangleList);
                 }

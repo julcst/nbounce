@@ -11,11 +11,36 @@ struct CameraData {
 @binding(0)
 var<uniform> camera: CameraData;
 
+struct Vertex {
+    position: vec4f,
+    normal: vec4f,
+    texcoord: vec4f,
+};
+
+struct BVHNode {
+    min: vec3f,
+    index: u32,
+    max: vec3f,
+    count: u32,
+};
+
+@group(2)
+@binding(0)
+var<storage, read> bvh: array<BVHNode>;
+
+@group(2)
+@binding(1)
+var<storage, read> vertices: array<Vertex>;
+
+@group(2)
+@binding(2)
+var<storage, read> indices: array<u32>;
+
+
 const COMPUTE_SIZE = 16.0;
 const PI: f32 = 3.14159265359;
-const NO_HIT: f32 = -1.0;
-const FOV: f32 = PI / 3.0;
-const FOCAL_LENGTH: f32  = 1.0 / tan(FOV / 2.0);
+const MAX_FLOAT: f32 = 0x1.fffffep+127f;
+const NO_HIT: f32 = MAX_FLOAT;
 
 struct Ray {
     origin: vec3f,
@@ -28,7 +53,7 @@ struct AABB {
     max: vec3f,
 };
 
-const aabb = AABB(vec3f(-1.0, -1.0, -1.0), vec3f(1.0, 1.0, 1.0));
+const EPS: f32 = 0.0000001;
 
 // Möller–Trumbore intersection algorithm
 fn intersect_triangle(ray: Ray, v0: vec3f, v1: vec3f, v2: vec3f) -> vec3f {
@@ -36,21 +61,24 @@ fn intersect_triangle(ray: Ray, v0: vec3f, v1: vec3f, v2: vec3f) -> vec3f {
     let edge2 = v2 - v0;
     let h = cross(ray.direction, edge2);
     let det = dot(edge1, h);
-    if det > -0.00001 && det < 0.00001 { // Backface culling: det < 0.00001
+    if det > -EPS && det < EPS { // Backface culling: det < 0.00001
         return vec3f(NO_HIT, NO_HIT, NO_HIT); // Parallel
     }
-    var inv_det = 1.0 / det;
+    var inv_det = 1 / det;
     var s = ray.origin - v0;
     var u = inv_det * dot(s, h);
-    if u < 0.0 || u > 1.0 {
+    if u < 0 || u > 1 {
         return vec3f(NO_HIT, NO_HIT, NO_HIT); // Outside
     }
     var q = cross(s, edge1);
     var v = inv_det * dot(ray.direction, q);
-    if v < 0.0 || u + v > 1.0 {
+    if v < 0 || u + v > 1 {
         return vec3f(NO_HIT, NO_HIT, NO_HIT); // Outside
     }
     var t = inv_det * dot(edge2, q);
+    if t < 0 {
+        return vec3f(NO_HIT, NO_HIT, NO_HIT); // Behind
+    }
     return vec3f(t, u, v);
 }
 
@@ -62,7 +90,78 @@ fn intersect_AABB(ray: Ray, aabb: AABB) -> f32 {
     var t_2 = max(t_min, t_max);
     var t_near = max(t_1.x, max(t_1.y, t_1.z));
     var t_far = min(t_2.x, min(t_2.y, t_2.z));
-    return select(NO_HIT, t_near, t_near < t_far);
+    return select(NO_HIT, t_near, t_near <= t_far && t_far >= 0.0);
+}
+
+struct HitInfo {
+    dist: f32,
+    n_aabb: u32,
+    n_tri: u32,
+};
+
+fn intersect_BVH(ray: Ray) -> HitInfo {
+    var stack: array<u32, 32>;
+    var dist = NO_HIT;
+    var n_aabb = 0u;
+    var n_tri = 0u;
+
+    // Init stack with top node
+    var i = 0u;
+
+    let index_top = 0u;
+    let top = bvh[index_top];
+    let dist_top = intersect_AABB(ray, AABB(top.min, top.max));
+    n_aabb += 1u;
+    if dist_top < dist {
+        stack[i] = index_top;
+        i += 1u;
+    }
+
+    while i > 0u {
+        // Pop next node from stack
+        i -= 1u;
+        var node = bvh[stack[i]];
+        let is_leaf = node.count > 0u;
+        if is_leaf { // Leaf node
+            for (var j = node.index * 3u; j < (node.index + node.count) * 3u; j += 3u) {
+                let v0 = vertices[indices[j + 0u]].position.xyz;
+                let v1 = vertices[indices[j + 1u]].position.xyz;
+                let v2 = vertices[indices[j + 2u]].position.xyz;
+                let t = intersect_triangle(ray, v0, v1, v2);
+                n_tri += 1u;
+                if t.x < dist {
+                    dist = t.x;
+                }
+            }
+        } else {
+            let index_left = node.index;
+            let left = bvh[index_left];
+            let dist_left = intersect_AABB(ray, AABB(left.min, left.max));
+
+            let index_right = index_left + 1u;
+            let right = bvh[index_right];
+            let dist_right = intersect_AABB(ray, AABB(right.min, right.max));
+            n_aabb += 2u;
+
+            let is_left_nearest = dist_left < dist_right;
+
+            let dist_far = select(dist_right, dist_left, is_left_nearest);
+            let index_far = select(index_right, index_left, is_left_nearest);
+            let dist_near = select(dist_left, dist_right, is_left_nearest);
+            let index_near = select(index_left, index_right, is_left_nearest);
+
+            if dist_far < dist {
+                stack[i] = index_far;
+                i += 1u;
+            }
+
+            if dist_near < dist {
+                stack[i] = index_near;
+                i += 1u;
+            }
+        }
+    }
+    return HitInfo(dist, n_aabb, n_tri);
 }
 
 fn generate_ray(id: vec3u) -> Ray {
@@ -78,11 +177,7 @@ fn generate_ray(id: vec3u) -> Ray {
     let world_dir = camera.clip_to_world * clip_dir;
     let dir = pos - world_dir.xyz / world_dir.w;
 
-    return Ray(
-        pos,
-        dir,
-        1.0 / dir,
-    );
+    return Ray(pos, dir, 1.0 / dir);
 }
 
 @compute
@@ -90,8 +185,9 @@ fn generate_ray(id: vec3u) -> Ray {
 fn main(@builtin(global_invocation_id) id: vec3u) {
     // var color = textureLoad(output, vec2i(id.xy));
     let ray = generate_ray(id);
-    let t = intersect_AABB(ray, aabb) * 0.01;
-    textureStore(output, id.xy, vec4f(t, t, t, 1.0));
+    let hit = intersect_BVH(ray);
+    let is_hit = (hit.dist != NO_HIT);
+    textureStore(output, id.xy, vec4f(f32(hit.n_aabb) * 0.01, select(0.0, 1.0, is_hit), f32(hit.n_tri) * 0.1, 1.0));
 }
 
 const MAX_ITERATIONS: u32 = 1024u;

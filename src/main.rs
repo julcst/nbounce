@@ -3,6 +3,7 @@ mod common;
 mod blit_renderer;
 mod mesh_renderer;
 mod raytracer;
+mod bvh;
 
 use app::MainApp;
 use winit::event_loop::{ControlFlow, EventLoop};

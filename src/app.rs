@@ -119,7 +119,7 @@ impl App for MainApp {
                 timestamp_writes: None,
             });
             self.fullscreen_renderer.render(&mut rpass);
-            self.mesh_renderer.render(&mut rpass, &self.camera);
+            //self.mesh_renderer.render(&mut rpass, &self.camera);
             self.imgui.render(&self.wgpu, &mut rpass);
         }
     

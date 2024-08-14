@@ -43,9 +43,10 @@ impl WGPUContext {
             )
             .await
             .expect("Failed to create device");
+        log::info!("Requested limits: {:#?}", device.limits());
 
         let surface_caps = surface.get_capabilities(&adapter);
-        log::info!("Surface capabilities: {:?}", surface_caps);
+        log::info!("Surface capabilities: {:#?}", surface_caps);
 
         let size = window.inner_size().max(PhysicalSize::new(1, 1));
 
