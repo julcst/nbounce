@@ -36,8 +36,7 @@ var<storage, read> vertices: array<Vertex>;
 @binding(2)
 var<storage, read> indices: array<u32>;
 
-
-const COMPUTE_SIZE = 16.0;
+const COMPUTE_SIZE: u32 = 8u;
 const PI: f32 = 3.14159265359;
 const MAX_FLOAT: f32 = 0x1.fffffep+127f;
 const NO_HIT: f32 = MAX_FLOAT;
@@ -61,7 +60,7 @@ fn intersect_triangle(ray: Ray, v0: vec3f, v1: vec3f, v2: vec3f) -> vec3f {
     let edge2 = v2 - v0;
     let h = cross(ray.direction, edge2);
     let det = dot(edge1, h);
-    if det > -EPS && det < EPS { // Backface culling: det < 0.00001
+    if det > -EPS && det < EPS { // Backface culling: det < EPS
         return vec3f(NO_HIT, NO_HIT, NO_HIT); // Parallel
     }
     var inv_det = 1 / det;
@@ -145,10 +144,10 @@ fn intersect_BVH(ray: Ray) -> HitInfo {
 
             let is_left_nearest = dist_left < dist_right;
 
-            let dist_far = select(dist_right, dist_left, is_left_nearest);
-            let index_far = select(index_right, index_left, is_left_nearest);
-            let dist_near = select(dist_left, dist_right, is_left_nearest);
-            let index_near = select(index_left, index_right, is_left_nearest);
+            let dist_far = select(dist_left, dist_right, is_left_nearest);
+            let index_far = select(index_left, index_right, is_left_nearest);
+            let dist_near = select(dist_right, dist_left, is_left_nearest);
+            let index_near = select(index_right, index_left, is_left_nearest);
 
             if dist_far < dist {
                 stack[i] = index_far;
@@ -181,19 +180,19 @@ fn generate_ray(id: vec3u) -> Ray {
 }
 
 @compute
-@workgroup_size(16, 16)
+@workgroup_size(COMPUTE_SIZE, COMPUTE_SIZE)
 fn main(@builtin(global_invocation_id) id: vec3u) {
     // var color = textureLoad(output, vec2i(id.xy));
     let ray = generate_ray(id);
     let hit = intersect_BVH(ray);
     let is_hit = (hit.dist != NO_HIT);
-    textureStore(output, id.xy, vec4f(f32(hit.n_aabb) * 0.01, select(0.0, 1.0, is_hit), f32(hit.n_tri) * 0.1, 1.0));
+    textureStore(output, id.xy, vec4f(f32(hit.n_aabb) * 0.05, select(0.0, 1.0, is_hit), f32(hit.n_tri) * 0.1, 1.0));
 }
 
 const MAX_ITERATIONS: u32 = 1024u;
 
 @compute
-@workgroup_size(16, 16)
+@workgroup_size(COMPUTE_SIZE, COMPUTE_SIZE)
 fn mandelbrot(@builtin(global_invocation_id) id: vec3u) {
     let dim = vec2f(textureDimensions(output));
     let uv = (2.0 * vec2f(id.xy) - dim) / dim.y;

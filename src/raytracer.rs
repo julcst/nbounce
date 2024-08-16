@@ -12,7 +12,8 @@ pub struct Raytracer {
 }
 
 impl Raytracer {
-    const COMPUTE_SIZE: u32 = 16;
+    const RESOLUTION_FACTOR: f32 = 1.0;
+    const COMPUTE_SIZE: u32 = 8;
 
     pub fn new(wgpu: &WGPUContext) -> Self {
         let module = wgpu.device.create_shader_module(wgpu::include_wgsl!("raytracer.wgsl"));
@@ -77,7 +78,7 @@ impl Raytracer {
             entry_point: "main",
             compilation_options: wgpu::PipelineCompilationOptions {
                 constants: &HashMap::from([
-                    (String::from("COMPUTE_SIZE"), Self::COMPUTE_SIZE as f64)
+                    // (String::from("COMPUTE_SIZE"), Self::COMPUTE_SIZE as f64)
                 ]),
                 zero_initialize_workgroup_memory: false,
                 vertex_pulling_transform: false,
@@ -89,7 +90,7 @@ impl Raytracer {
     }
 
     fn create_output_texture(wgpu: &WGPUContext) -> Texture {
-        let dim = uvec2(wgpu.config.width, wgpu.config.height).as_vec2() * 0.5;
+        let dim = uvec2(wgpu.config.width, wgpu.config.height).as_vec2() * Self::RESOLUTION_FACTOR;
         let dim = dim.as_uvec2() / Self::COMPUTE_SIZE * Self::COMPUTE_SIZE;
 
         let size = wgpu::Extent3d {
