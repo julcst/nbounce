@@ -120,9 +120,9 @@ impl BVHTree {
         let mut triangles = Vec::with_capacity(indices.len() as usize / 3);
 
         for triangle in indices.chunks_exact(3) {
-            let v0 = vertices[triangle[0] as usize].position.xyz();
-            let v1 = vertices[triangle[1] as usize].position.xyz();
-            let v2 = vertices[triangle[2] as usize].position.xyz();
+            let v0 = vertices[triangle[0] as usize].position;
+            let v1 = vertices[triangle[1] as usize].position;
+            let v2 = vertices[triangle[2] as usize].position;
             let center = (v0 + v1 + v2) / 3.0;
             let min = v0.min(v1).min(v2);
             let max = v0.max(v1).max(v2);

@@ -12,9 +12,10 @@ struct CameraData {
 var<uniform> camera: CameraData;
 
 struct Vertex {
-    position: vec4f,
-    normal: vec4f,
-    texcoord: vec4f,
+    position: vec3f,
+    u: f32,
+    normal: vec3f,
+    v: f32,
 };
 
 struct BVHNode {
@@ -135,7 +136,7 @@ fn intersect_BVH(ray: Ray) -> HitInfo {
                     let barycentrics = vec3f(1.0 - t.y - t.z, t.yz);
                     hit.position = ray.origin + hit.dist * ray.direction;
                     hit.normal = normalize(mat3x3f(v0.normal.xyz, v1.normal.xyz, v2.normal.xyz) * barycentrics);
-                    hit.texcoord = mat3x2f(v0.texcoord.xy, v1.texcoord.xy, v2.texcoord.xy) * barycentrics;
+                    hit.texcoord = mat3x2f(vec2f(v0.u, v0.v), vec2f(v1.u, v1.v), vec2f(v2.u, v2.v)) * barycentrics;
                 }
             }
         } else {
