@@ -2,20 +2,20 @@ use std::collections::HashMap;
 
 use glam::{uvec2, Vec3Swizzles};
 
-use crate::{bvh::BVHBindGroup, common::{CameraController, Mesh, Texture, WGPUContext}};
+use crate::common::{CameraController, Texture, WGPUContext};
+use crate::scene::SceneBindGroup;
 
 pub struct Raytracer {
     pipeline: wgpu::ComputePipeline,
     output_group: wgpu::BindGroup,
     output: Texture,
-    bvh: BVHBindGroup,
 }
 
 impl Raytracer {
-    const RESOLUTION_FACTOR: f32 = 1.0;
+    const RESOLUTION_FACTOR: f32 = 0.5;
     const COMPUTE_SIZE: u32 = 8;
 
-    pub fn new(wgpu: &WGPUContext) -> Self {
+    pub fn new(wgpu: &WGPUContext, scene: &SceneBindGroup, camera: &CameraController) -> Self {
         let module = wgpu.device.create_shader_module(wgpu::include_wgsl!("raytracer.wgsl"));
 
         let output = Self::create_output_texture(wgpu);
@@ -47,27 +47,9 @@ impl Raytracer {
             ]
         });
 
-        let camera_layout = wgpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Raytracer Camera Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ]
-        });
-
-        let bvh = BVHBindGroup::from_mesh(wgpu, &Mesh::new(wgpu, std::path::Path::new("assets/bunny.glb")).unwrap());
-
         let layout = wgpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Raytracer Pipeline Layout"),
-            bind_group_layouts: &[&output_layout, &camera_layout, bvh.layout()],
+            bind_group_layouts: &[&output_layout, camera.layout(), scene.layout()],
             push_constant_ranges: &[],
         });
 
@@ -86,7 +68,7 @@ impl Raytracer {
             cache: None,
         });
 
-        Self { pipeline, output_group, output, bvh }
+        Self { pipeline, output_group, output }
     }
 
     fn create_output_texture(wgpu: &WGPUContext) -> Texture {
@@ -120,7 +102,7 @@ impl Raytracer {
         });
     }
 
-    pub fn dispatch(&self, encoder: &mut wgpu::CommandEncoder, camera: &CameraController) {
+    pub fn dispatch(&self, encoder: &mut wgpu::CommandEncoder, scene: &SceneBindGroup, camera: &CameraController) {
         let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("Raytracer Compute Pass"),
             timestamp_writes: None,
@@ -128,7 +110,7 @@ impl Raytracer {
         cpass.set_pipeline(&self.pipeline);
         cpass.set_bind_group(0, &self.output_group, &[]);
         cpass.set_bind_group(1, camera.bind_group(), &[]);
-        cpass.set_bind_group(2, self.bvh.bind_group(), &[]);
+        cpass.set_bind_group(2, scene.bind_group(), &[]);
         let n_workgroups = self.output.size().xy() / Self::COMPUTE_SIZE;
         cpass.dispatch_workgroups(n_workgroups.x, n_workgroups.y, 1);
     }

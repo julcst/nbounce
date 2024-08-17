@@ -1,36 +1,18 @@
-use std::path::Path;
-
-use crate::common::{CameraController, Mesh, Vertex, WGPUContext};
+use crate::common::{CameraController, WGPUContext};
+use crate::scene::{SceneBindGroup, Vertex};
 
 pub struct MeshRenderer {
-    mesh: Mesh,
     pipeline: wgpu::RenderPipeline,
 }
 
 impl MeshRenderer {
-    pub fn new(wgpu: &WGPUContext) -> Self {
+    pub fn new(wgpu: &WGPUContext, camera: &CameraController) -> Self {
         let shader = wgpu.device.create_shader_module(wgpu::include_wgsl!("mesh.wgsl"));
-
-        let camera_bind_group_layout = wgpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Camera Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
 
         let pipeline_layout = wgpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Mesh Pipeline Layout"),
             bind_group_layouts: &[
-                &camera_bind_group_layout,
+                camera.layout(),
             ],
             push_constant_ranges: &[],
         });
@@ -70,26 +52,19 @@ impl MeshRenderer {
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
+            multisample: wgpu::MultisampleState::default(),
             multiview: None,
             cache: None,
         });
 
-        let mesh = Mesh::new(wgpu, Path::new("assets/bunny.glb")).expect("Could not load mesh");
-
         Self {
-            mesh,
             pipeline,
         }
     }
 
-    pub fn render<'r>(&'r self, render_pass: &mut wgpu::RenderPass<'r>, camera: &CameraController) {
+    pub fn render<'r>(&'r self, render_pass: &mut wgpu::RenderPass<'r>, scene: &SceneBindGroup, camera: &CameraController) {
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, camera.bind_group(), &[]);
-        self.mesh.draw(render_pass);
+        scene.draw(render_pass);
     }
 }

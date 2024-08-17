@@ -52,7 +52,7 @@ struct AABB {
     max: vec3f,
 };
 
-const EPS: f32 = 0.0000001;
+const EPS: f32 = 0.00000001;
 
 // Möller–Trumbore intersection algorithm
 fn intersect_triangle(ray: Ray, v0: vec3f, v1: vec3f, v2: vec3f) -> vec3f {
@@ -94,15 +94,17 @@ fn intersect_AABB(ray: Ray, aabb: AABB) -> f32 {
 
 struct HitInfo {
     dist: f32,
+    position: vec3f,
+    normal: vec3f,
+    texcoord: vec2f,
     n_aabb: u32,
     n_tri: u32,
 };
 
 fn intersect_BVH(ray: Ray) -> HitInfo {
     var stack: array<u32, 32>;
-    var dist = NO_HIT;
-    var n_aabb = 0u;
-    var n_tri = 0u;
+
+    var hit = HitInfo(NO_HIT, vec3f(0.0), vec3f(0.0), vec2f(0.0), 0u, 0u);
 
     // Init stack with top node
     var i = 0u;
@@ -110,8 +112,8 @@ fn intersect_BVH(ray: Ray) -> HitInfo {
     let index_top = 0u;
     let top = bvh[index_top];
     let dist_top = intersect_AABB(ray, AABB(top.min, top.max));
-    n_aabb += 1u;
-    if dist_top < dist {
+    hit.n_aabb += 1u;
+    if dist_top < hit.dist {
         stack[i] = index_top;
         i += 1u;
     }
@@ -123,13 +125,17 @@ fn intersect_BVH(ray: Ray) -> HitInfo {
         let is_leaf = node.count > 0u;
         if is_leaf { // Leaf node
             for (var j = node.index * 3u; j < (node.index + node.count) * 3u; j += 3u) {
-                let v0 = vertices[indices[j + 0u]].position.xyz;
-                let v1 = vertices[indices[j + 1u]].position.xyz;
-                let v2 = vertices[indices[j + 2u]].position.xyz;
-                let t = intersect_triangle(ray, v0, v1, v2);
-                n_tri += 1u;
-                if t.x < dist {
-                    dist = t.x;
+                let v0 = vertices[indices[j + 0u]];
+                let v1 = vertices[indices[j + 1u]];
+                let v2 = vertices[indices[j + 2u]];
+                let t = intersect_triangle(ray, v0.position.xyz, v1.position.xyz, v2.position.xyz);
+                hit.n_tri += 1u;
+                if t.x < hit.dist {
+                    hit.dist = t.x;
+                    let barycentrics = vec3f(1.0 - t.y - t.z, t.yz);
+                    hit.position = ray.origin + hit.dist * ray.direction;
+                    hit.normal = normalize(mat3x3f(v0.normal.xyz, v1.normal.xyz, v2.normal.xyz) * barycentrics);
+                    hit.texcoord = mat3x2f(v0.texcoord.xy, v1.texcoord.xy, v2.texcoord.xy) * barycentrics;
                 }
             }
         } else {
@@ -140,7 +146,7 @@ fn intersect_BVH(ray: Ray) -> HitInfo {
             let index_right = index_left + 1u;
             let right = bvh[index_right];
             let dist_right = intersect_AABB(ray, AABB(right.min, right.max));
-            n_aabb += 2u;
+            hit.n_aabb += 2u;
 
             let is_left_nearest = dist_left < dist_right;
 
@@ -149,20 +155,21 @@ fn intersect_BVH(ray: Ray) -> HitInfo {
             let dist_near = select(dist_right, dist_left, is_left_nearest);
             let index_near = select(index_right, index_left, is_left_nearest);
 
-            if dist_far < dist {
+            if dist_far < hit.dist {
                 stack[i] = index_far;
                 i += 1u;
             }
 
-            if dist_near < dist {
+            if dist_near < hit.dist {
                 stack[i] = index_near;
                 i += 1u;
             }
         }
     }
-    return HitInfo(dist, n_aabb, n_tri);
+    return hit;
 }
 
+// TODO: Match with rasterization
 fn generate_ray(id: vec3u) -> Ray {
     let dim = vec2f(textureDimensions(output));
     let uv = 2.0 * vec2f(id.xy) / dim - 1.0;
@@ -187,24 +194,6 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     let hit = intersect_BVH(ray);
     let is_hit = (hit.dist != NO_HIT);
     textureStore(output, id.xy, vec4f(f32(hit.n_aabb) * 0.05, select(0.0, 1.0, is_hit), f32(hit.n_tri) * 0.1, 1.0));
-}
-
-const MAX_ITERATIONS: u32 = 1024u;
-
-@compute
-@workgroup_size(COMPUTE_SIZE, COMPUTE_SIZE)
-fn mandelbrot(@builtin(global_invocation_id) id: vec3u) {
-    let dim = vec2f(textureDimensions(output));
-    let uv = (2.0 * vec2f(id.xy) - dim) / dim.y;
-    let c = uv * 1.2 - vec2f(0.7, 0.0); 
-    var z = c;
-    var i = 0u;
-    for (; i < MAX_ITERATIONS; i++) {
-        z = vec2f(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;
-        if dot(z, z) > 16.0 {
-            break;
-        }
-    }
-    let value = f32(i) / f32(MAX_ITERATIONS);
-    textureStore(output, id.xy, vec4f(value, value, value, 1.0));
+    //textureStore(output, id.xy, vec4f(hit.normal * 0.5 + 0.5, 1.0));
+    //textureStore(output, id.xy, vec4f(hit.texcoord, 0.0, 1.0));
 }

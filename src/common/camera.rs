@@ -5,7 +5,7 @@ use super::WGPUContext;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::NoUninit)]
-pub struct CameraData {
+pub struct CameraBuffer {
     pub world_to_clip: Mat4,
     pub clip_to_world: Mat4,
 }
@@ -20,9 +20,10 @@ pub struct CameraController {
     aspect_ratio: f32,
     near: f32,
     is_dirty: bool,
-    data: CameraData,
+    data: CameraBuffer,
     buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+    layout: wgpu::BindGroupLayout,
 }
 
 impl CameraController {
@@ -31,12 +32,12 @@ impl CameraController {
     pub fn new(wgpu: &WGPUContext) -> Self {
         let buffer = wgpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Camera Buffer"),
-            size: std::mem::size_of::<CameraData>() as u64,
+            size: std::mem::size_of::<CameraBuffer>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let bind_group_layout = wgpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let layout = wgpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Camera Bind Group Layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
@@ -52,7 +53,7 @@ impl CameraController {
 
         let bind_group = wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Camera Bind Group"),
-            layout: &bind_group_layout,
+            layout: &layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: buffer.as_entire_binding(),
@@ -68,14 +69,19 @@ impl CameraController {
             aspect_ratio: 1.0,
             near: 0.1,
             is_dirty: true,
-            data: CameraData::default(),
+            data: CameraBuffer::default(),
             buffer,
             bind_group,
+            layout,
         }
     }
 
     pub fn bind_group(&self) -> &wgpu::BindGroup {
         &self.bind_group
+    }
+
+    pub fn layout(&self) -> &wgpu::BindGroupLayout {
+        &self.layout
     }
 
     pub fn orbit(&mut self, delta: Vec2) {
@@ -157,11 +163,11 @@ impl CameraController {
         1.0 / (self.fov / 2.0).tan()
     }
 
-    fn calc_camera_data(&self) -> CameraData {
+    fn calc_camera_data(&self) -> CameraBuffer {
         let world_to_view = self.calc_view_matrix();
         let view_to_clip = self.calc_projection_matrix();
         let world_to_clip = view_to_clip * world_to_view;
-        CameraData {
+        CameraBuffer {
             world_to_clip,
             clip_to_world: world_to_clip.inverse(),
         }

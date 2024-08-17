@@ -1,7 +1,9 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use winit::window::Window;
 
+use crate::scene::{Scene, SceneBindGroup};
 use crate::common::{App, CameraController, ImGuiContext, PerformanceMetrics, Texture, WGPUContext};
 
 use crate::blit_renderer::BlitRenderer;
@@ -12,8 +14,10 @@ pub struct MainApp {
     wgpu: WGPUContext,
     imgui: ImGuiContext,
     window: Arc<Window>,
-    depth_texture: Texture,
     metrics: PerformanceMetrics<120>,
+
+    depth_texture: Texture,
+    scene: SceneBindGroup,
     fullscreen_renderer: BlitRenderer,
     mesh_renderer: MeshRenderer,
     raytracer: Raytracer,
@@ -24,18 +28,26 @@ impl App for MainApp {
     async fn new(window: Arc<Window>) -> Self {
         let wgpu = WGPUContext::new(Arc::clone(&window)).await;
         let imgui = ImGuiContext::new(Arc::clone(&window), &wgpu);
-        let mesh_renderer = MeshRenderer::new(&wgpu);
+        let metrics = PerformanceMetrics::default();
+
+        let mut scene_data = Scene::default();
+        scene_data.parse_gltf(Path::new("assets/bunny.glb")).unwrap();
+        let scene = SceneBindGroup::from_scene(&wgpu, &mut scene_data);
+
         let camera = CameraController::new(&wgpu);
+
+        let mesh_renderer = MeshRenderer::new(&wgpu, &camera);
         let depth_texture = Texture::create_depth(&wgpu);
-        let raytracer = Raytracer::new(&wgpu);
+        let raytracer = Raytracer::new(&wgpu, &scene, &camera);
         let fullscreen_renderer = BlitRenderer::new(&wgpu, raytracer.output_texture());
 
         Self {
             wgpu,
             imgui,
             window,
+            metrics,
             depth_texture,
-            metrics: PerformanceMetrics::default(),
+            scene,
             fullscreen_renderer,
             mesh_renderer,
             camera,
@@ -94,7 +106,7 @@ impl App for MainApp {
             label: Some("Render Encoder"),
         });
 
-        self.raytracer.dispatch(&mut encoder, &self.camera);
+        self.raytracer.dispatch(&mut encoder, &self.scene, &self.camera);
 
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -119,7 +131,7 @@ impl App for MainApp {
                 timestamp_writes: None,
             });
             self.fullscreen_renderer.render(&mut rpass);
-            //self.mesh_renderer.render(&mut rpass, &self.camera);
+            //self.mesh_renderer.render(&mut rpass, &self.scene, &self.camera);
             self.imgui.render(&self.wgpu, &mut rpass);
         }
     

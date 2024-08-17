@@ -1,7 +1,6 @@
 use glam::{UVec3, Vec3, Vec4Swizzles};
-use wgpu::util::DeviceExt;
 
-use crate::common::{Mesh, Vertex};
+use crate::scene::Vertex;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::NoUninit)]
@@ -15,6 +14,24 @@ pub struct BVHNode {
 }
 
 impl BVHNode {
+    fn new_leaf(triangles: &[Triangle], index: u32, count: u32) -> Self {
+        debug_assert_ne!(count, 0);
+
+        let mut min: Vec3 = triangles[index as usize].min;
+        let mut max: Vec3 = triangles[index as usize].max;
+
+        for i in index + 1..index + count {
+            min = min.min(triangles[i as usize].min);
+            max = max.max(triangles[i as usize].max);
+        }
+
+        Self { min, index, max, count, }
+    }
+
+    fn from_bin(bin: &Bin, index: u32) -> Self {
+        Self { min: bin.min, index, max: bin.max, count: bin.count, }
+    }
+
     fn is_leaf(&self) -> bool {
         self.count > 0
     }
@@ -24,12 +41,8 @@ impl BVHNode {
         self.index = left_child;
     }
 
-    fn include(&mut self, triangle: &Triangle) {
-        self.min = self.min.min(triangle.min);
-        self.max = self.max.max(triangle.max);
-    }
-
     fn cost(&self) -> f32 {
+        debug_assert!(self.is_leaf());
         let extent = self.max - self.min;
         if extent.is_finite() {
             let area = extent.x * extent.y + extent.x * extent.z + extent.y * extent.z;
@@ -42,8 +55,6 @@ impl BVHNode {
 
 pub struct BVHTree {
     nodes: Vec<BVHNode>,
-    vertices: Vec<Vertex>,
-    indices: Vec<u32>,
 }
 
 struct Triangle {
@@ -101,27 +112,27 @@ pub struct Split {
 
 impl BVHTree {
     const MAX_DEPTH: u32 = 32;
+    const N_BINS: usize = 16;
 
-    pub fn build_bvh(mesh: &Mesh) -> Self {
+    pub fn build_bvh(vertices: &[Vertex], indices: &mut[u32]) -> Self {
         let timer = std::time::Instant::now();
         let mut nodes = Vec::new();
-        let vertices = mesh.vertices().to_vec();
-        let mut triangles = Vec::with_capacity(mesh.num_indices() as usize / 3);
+        let mut triangles = Vec::with_capacity(indices.len() as usize / 3);
 
-        for indices in mesh.indices().chunks(3) {
-            let v0 = vertices[indices[0] as usize].position.xyz();
-            let v1 = vertices[indices[1] as usize].position.xyz();
-            let v2 = vertices[indices[2] as usize].position.xyz();
+        for triangle in indices.chunks_exact(3) {
+            let v0 = vertices[triangle[0] as usize].position.xyz();
+            let v1 = vertices[triangle[1] as usize].position.xyz();
+            let v2 = vertices[triangle[2] as usize].position.xyz();
             let center = (v0 + v1 + v2) / 3.0;
             let min = v0.min(v1).min(v2);
             let max = v0.max(v1).max(v2);
-            triangles.push(Triangle {center, min, max, indices: indices.try_into().unwrap()});
+            triangles.push(Triangle {center, min, max, indices: triangle.try_into().unwrap()});
         }
         log::info!("Built triangle cache in {:?}", timer.elapsed());
 
         let mut stack = Vec::new();
 
-        let parent = Self::build_leaf(&triangles, 0, triangles.len() as u32);
+        let parent = BVHNode::new_leaf(&triangles, 0, triangles.len() as u32);
         nodes.push(parent);
         stack.push((0u32, 0u32));
 
@@ -142,33 +153,21 @@ impl BVHTree {
             }
         }
 
-        let indices = triangles.iter().flat_map(|t| t.indices).collect();
+        for (i, index) in triangles.iter().flat_map(|t| t.indices).enumerate() {
+            indices[i] = index;
+        }
 
         log::info!("Built BVH in {:?}", timer.elapsed());
 
-        Self { nodes, vertices, indices, }
-    }
-
-    fn build_leaf(triangles: &[Triangle], index: u32, count: u32) -> BVHNode {
-        debug_assert_ne!(count, 0);
-
-        let mut min: Vec3 = triangles[index as usize].min;
-        let mut max: Vec3 = triangles[index as usize].max;
-
-        for i in index + 1..index + count {
-            min = min.min(triangles[i as usize].min);
-            max = max.max(triangles[i as usize].max);
-        }
-
-        BVHNode { min, index, max, count, }
+        Self { nodes }
     }
 
     fn split_node(triangles: &mut [Triangle], parent: &BVHNode) -> Option<(BVHNode, BVHNode)> {
         match parent.count {
             0 | 1 => None, // No need to split, single triangle
             2 => { // Just two triangles -> split manually
-                let left = Self::build_leaf(triangles, parent.index, 1);
-                let right = Self::build_leaf(triangles, parent.index + 1, 1);
+                let left = BVHNode::new_leaf(triangles, parent.index, 1);
+                let right = BVHNode::new_leaf(triangles, parent.index + 1, 1);
                 if left.cost() + right.cost() < parent.cost() {
                     Some((left, right))
                 } else {
@@ -215,8 +214,6 @@ impl BVHTree {
         result
     }
 
-    const N_BINS: usize = 16;
-
     fn approximate_best_split(triangles: &[Triangle], parent: &BVHNode) -> Option<Split> {
         // Build N_BINS bins per axis
         let mut bins = [Bin::default(); Self::N_BINS * 3];
@@ -255,6 +252,7 @@ impl BVHTree {
         result
     }
 
+    #[allow(dead_code)]
     fn longest_split(parent: &BVHNode) -> Split {
         let extent = parent.max - parent.min;
         let mut axis = if extent.x > extent.y {0} else {1};
@@ -264,141 +262,31 @@ impl BVHTree {
     }
 
     fn split(triangles: &mut [Triangle], parent: &BVHNode, split: Split) -> Option<(BVHNode, BVHNode)> {
-        let mut left_count = 0u32;
+        let mut left = Bin::default();
+        let mut right = Bin::default();
+
         for i in parent.index..parent.index + parent.count {
-            let center = triangles[i as usize].center[split.axis];
+            let triangle = &triangles[i as usize];
+            let center = triangle.center[split.axis];
             if center < split.mid {
-                triangles.swap(i as usize, parent.index as usize + left_count as usize);
-                left_count += 1;
+                left.include(triangle);
+                triangles.swap(i as usize, parent.index as usize + left.count as usize - 1);
+            } else {
+                right.include(triangle);
             }
         }
 
-        if left_count == 0 || left_count == parent.count {
+        if left.count == 0 || right.count == 0 {
             log::debug!("Failed to split node");
             return None;
         }
 
-        let left = Self::build_leaf(triangles, parent.index, left_count);
-        let right = Self::build_leaf(triangles, parent.index + left_count, parent.count - left_count);
+        let left = BVHNode::from_bin(&left, parent.index);
+        let right = BVHNode::from_bin(&right, parent.index + left.count);
         Some((left, right))
     }
-}
 
-pub struct BVHBindGroup {
-    nodes: wgpu::Buffer,
-    vertices: wgpu::Buffer,
-    indices: wgpu::Buffer,
-    group: wgpu::BindGroup,
-    layout: wgpu::BindGroupLayout,
-}
-
-impl BVHBindGroup {
-
-    pub fn from_mesh(wgpu: &crate::common::WGPUContext, mesh: &Mesh) -> Self {
-        let bvh = BVHTree::build_bvh(mesh);
-        Self::from_bvh(wgpu, &bvh)
-    }
-
-    pub fn from_bvh(wgpu: &crate::common::WGPUContext, bvh: &BVHTree) -> Self {
-        let nodes = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("BVH Nodes"),
-            contents: bytemuck::cast_slice(&bvh.nodes),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-
-        let vertices = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("BVH Vertices"),
-            contents: bytemuck::cast_slice(&bvh.vertices),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-
-        let indices = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("BVH Indices"),
-            contents: bytemuck::cast_slice(&bvh.indices),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-
-        let layout = wgpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("BVH Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-
-        let group = wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("BVH Bind Group"),
-            layout: &layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &nodes,
-                        offset: 0,
-                        size: None,
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &vertices,
-                        offset: 0,
-                        size: None,
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &indices,
-                        offset: 0,
-                        size: None,
-                    }),
-                },
-            ],
-        });
-
-        Self {
-            nodes,
-            vertices,
-            indices,
-            group,
-            layout,
-        }
-    }
-
-    pub fn bind_group(&self) -> &wgpu::BindGroup {
-        &self.group
-    }
-
-    pub fn layout(&self) -> &wgpu::BindGroupLayout {
-        &self.layout
+    pub fn nodes(&self) -> &Vec<BVHNode> {
+        &self.nodes
     }
 }

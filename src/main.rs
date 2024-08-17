@@ -4,6 +4,7 @@ mod blit_renderer;
 mod mesh_renderer;
 mod raytracer;
 mod bvh;
+mod scene;
 
 use app::MainApp;
 use winit::event_loop::{ControlFlow, EventLoop};
