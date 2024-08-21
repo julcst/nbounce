@@ -21,7 +21,7 @@ struct BVHNode {
     min: vec3f,
     start: u32,
     max: vec3f,
-    count: u32,
+    end: u32,
 };
 
 @group(2)
@@ -122,9 +122,9 @@ fn intersect_BVH(ray: Ray) -> HitInfo {
         // Pop next node from stack
         i -= 1u;
         var node = bvh[stack[i]];
-        let is_leaf = node.count > 0u;
+        let is_leaf = node.end > 0u;
         if is_leaf { // Leaf node
-            for (var j = node.start * 3u; j < (node.start + node.count) * 3u; j += 3u) {
+            for (var j = node.start * 3u; j < node.end * 3u; j += 3u) {
                 let v0 = vertices[indices[j + 0u]];
                 let v1 = vertices[indices[j + 1u]];
                 let v2 = vertices[indices[j + 2u]];

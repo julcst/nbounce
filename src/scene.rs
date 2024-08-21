@@ -203,7 +203,7 @@ impl SceneBuffers {
         let indices = scene.instances[0].indices.to_owned();
 
         let mut triangles = bvh::build_triangle_cache(&scene.vertices, &scene.indices);
-        let bvh = bvh::build_bvh(&mut triangles, indices.start / 3, indices.len() as u32 / 3);
+        let bvh = bvh::build_bvh(&mut triangles, indices.start / 3..indices.len() as u32 / 3);
         bvh::flatten_triangle_list(&triangles, &mut scene.indices);
 
         let nodes = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
