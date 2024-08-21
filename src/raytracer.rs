@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use glam::{uvec2, Vec3Swizzles};
 
 use crate::common::{CameraController, Texture, WGPUContext};
-use crate::scene::SceneBindGroup;
+use crate::scene::SceneBuffers;
 
 pub struct Raytracer {
     pipeline: wgpu::ComputePipeline,
@@ -15,7 +15,7 @@ impl Raytracer {
     const RESOLUTION_FACTOR: f32 = 0.5;
     const COMPUTE_SIZE: u32 = 8;
 
-    pub fn new(wgpu: &WGPUContext, scene: &SceneBindGroup, camera: &CameraController) -> Self {
+    pub fn new(wgpu: &WGPUContext, scene: &SceneBuffers, camera: &CameraController) -> Self {
         let module = wgpu.device.create_shader_module(wgpu::include_wgsl!("raytracer.wgsl"));
 
         let output = Self::create_output_texture(wgpu);
@@ -102,7 +102,7 @@ impl Raytracer {
         });
     }
 
-    pub fn dispatch(&self, encoder: &mut wgpu::CommandEncoder, scene: &SceneBindGroup, camera: &CameraController) {
+    pub fn dispatch(&self, encoder: &mut wgpu::CommandEncoder, scene: &SceneBuffers, camera: &CameraController) {
         let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("Raytracer Compute Pass"),
             timestamp_writes: None,

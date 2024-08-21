@@ -19,7 +19,7 @@ struct Vertex {
 
 struct BVHNode {
     min: vec3f,
-    index: u32,
+    start: u32,
     max: vec3f,
     count: u32,
 };
@@ -124,7 +124,7 @@ fn intersect_BVH(ray: Ray) -> HitInfo {
         var node = bvh[stack[i]];
         let is_leaf = node.count > 0u;
         if is_leaf { // Leaf node
-            for (var j = node.index * 3u; j < (node.index + node.count) * 3u; j += 3u) {
+            for (var j = node.start * 3u; j < (node.start + node.count) * 3u; j += 3u) {
                 let v0 = vertices[indices[j + 0u]];
                 let v1 = vertices[indices[j + 1u]];
                 let v2 = vertices[indices[j + 2u]];
@@ -139,7 +139,7 @@ fn intersect_BVH(ray: Ray) -> HitInfo {
                 }
             }
         } else {
-            let index_left = node.index;
+            let index_left = node.start;
             let left = bvh[index_left];
             let dist_left = intersect_AABB(ray, AABB(left.min, left.max));
 

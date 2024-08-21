@@ -1,11 +1,12 @@
+use std::collections::HashMap;
 use std::{mem, ops::Range, path::Path};
 
-use glam::{self, Vec2, Vec3, Vec4};
+use glam::{Mat4, Vec2, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
-use crate::bvh::BVHTree;
+use crate::bvh;
 
-use crate::common::WGPUContext;
+use crate::common::{Texture, WGPUContext};
 
 // TODO: Benchmark best layout
 #[repr(C)]
@@ -42,8 +43,14 @@ impl Vertex {
     }
 }
 
+#[derive(Debug)]
 pub struct Instance {
     indices: Range<u32>,
+    local_to_world: Mat4,
+    color: Vec4,
+    roughness: f32,
+    metallic: f32,
+    emissive: f32,
 }
 
 #[derive(Debug)]
@@ -92,6 +99,26 @@ impl Scene {
 
         let time = std::time::Instant::now();
 
+        // let mut textures = Vec::new();
+        // 
+        // for texture in gltf.textures() {
+        //     let image = _images.get(texture.source().index()).unwrap();
+        //     let format = match image.format {
+        //         gltf::image::Format::R8 => wgpu::TextureFormat::R8Unorm,
+        //         gltf::image::Format::R8G8 => wgpu::TextureFormat::Rg8Unorm,
+        //         gltf::image::Format::R8G8B8A8 => wgpu::TextureFormat::Rgba8Unorm,
+        //         gltf::image::Format::R16 => wgpu::TextureFormat::R16Unorm,
+        //         gltf::image::Format::R16G16 => wgpu::TextureFormat::Rg16Unorm,
+        //         gltf::image::Format::R16G16B16A16 => wgpu::TextureFormat::Rgba16Unorm,
+        //         gltf::image::Format::R32G32B32A32FLOAT => wgpu::TextureFormat::Rgba32Float,
+        //         _ => unimplemented!(),
+        //     };
+        //     textures.push(Texture::from_data(&wgpu, format, image.width, image.height, &image.pixels))
+        // }
+
+        // Maps primitive index -> index range
+        let mut geometry_map = HashMap::new();
+
         for mesh in gltf.meshes() {
             log::info!("Processing {:?} primitives in mesh {:?}", mesh.primitives().len(), mesh.name());
             for primitive in mesh.primitives() {
@@ -106,11 +133,11 @@ impl Scene {
                 log::info!("{:?}", primitive.bounding_box());
                 let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
-                let start_index = self.vertices.len() as u32;
                 let positions = reader.read_positions().ok_or(MeshError::MissingPositions)?;
                 let normals = reader.read_normals().ok_or(MeshError::MissingNormals)?;
                 let texcoords = reader.read_tex_coords(0).ok_or(MeshError::MissingTexCoords)?.into_f32();
 
+                let start_vertex = self.vertices.len() as u32;
                 for ((position, normal), texcoord) in positions.zip(normals).zip(texcoords) {
                     self.vertices.push(Vertex {
                         position: Vec3::from(position).extend(1.0),
@@ -119,19 +146,51 @@ impl Scene {
                     });
                 }
 
+                let start_index = self.indices.len() as u32;
                 let gltf_indices = reader.read_indices().ok_or(MeshError::MissingIndices)?.into_u32();
-                self.indices.extend(gltf_indices);
+                self.indices.extend(gltf_indices.map(|i| i + start_vertex));
 
-                self.instances.push(Instance { indices: start_index..self.indices.len() as u32 })
+                geometry_map.insert((mesh.index(), primitive.index()) , start_index..self.indices.len() as u32);
             }
         }
+
+        log::info!("Primitives: {:#?}", geometry_map);
+
+        for node in gltf.nodes() {
+            if let Some(mesh) = node.mesh() {
+                let local_to_world = Mat4::from_cols_array_2d(&node.transform().matrix());
+                for primitive in mesh.primitives() {
+                    let material = primitive.material();
+                    let emissive = Vec3::from(material.emissive_factor());
+                    let is_emissive = emissive != Vec3::ZERO;
+                    let color = if is_emissive {
+                        emissive.extend(1.0)
+                    } else {
+                        Vec4::from_array(material.pbr_metallic_roughness().base_color_factor())
+                    };
+                    self.instances.push(Instance { 
+                        indices: geometry_map.get(&(mesh.index(), primitive.index())).unwrap().clone(),
+                        local_to_world,
+                        color,
+                        roughness: material.pbr_metallic_roughness().roughness_factor(),
+                        metallic: material.pbr_metallic_roughness().metallic_factor(),
+                        emissive: if is_emissive {1.0} else {0.0},
+                    });
+                }
+            } else {
+                log::info!("Skipped non-mesh node {:?}", node.name());
+            }
+        }
+
+        log::info!("Scene: {:#?}", self.instances);
+
         log::info!("Processed {:?} in {:?}", path, time.elapsed());
         Ok(())
     }
 }
 
 
-pub struct SceneBindGroup {
+pub struct SceneBuffers {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     indices: Range<u32>,
@@ -139,14 +198,17 @@ pub struct SceneBindGroup {
     layout: wgpu::BindGroupLayout,
 }
 
-impl SceneBindGroup {
+impl SceneBuffers {
     pub fn from_scene(wgpu: &WGPUContext, scene: &mut Scene) -> Self {
-        let bvh = BVHTree::build_bvh(&scene.vertices, &mut scene.indices);
-        let indices = 0..scene.indices.len() as u32;
+        let indices = scene.instances[0].indices.to_owned();
+
+        let mut triangles = bvh::build_triangle_cache(&scene.vertices, &scene.indices);
+        let bvh = bvh::build_bvh(&mut triangles, indices.start / 3, indices.len() as u32 / 3);
+        bvh::flatten_triangle_list(&triangles, &mut scene.indices);
 
         let nodes = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("BVH Nodes"),
-            contents: bytemuck::cast_slice(bvh.nodes()),
+            contents: bytemuck::cast_slice(&bvh),
             usage: wgpu::BufferUsages::STORAGE,
         });
 
@@ -253,6 +315,6 @@ impl SceneBindGroup {
     pub fn draw(&self, render_pass: &mut wgpu::RenderPass) {
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        render_pass.draw_indexed(self.indices.clone(), 0, 0..1);
+        render_pass.draw_indexed(self.indices.to_owned(), 0, 0..1);
     }
 }

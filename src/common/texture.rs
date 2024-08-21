@@ -86,27 +86,14 @@ impl Texture {
         Self::create_texture(wgpu, size, format)
     }
 
-    pub fn from_gltf(wgpu: &WGPUContext, texture: &gltf::Texture, images: &[gltf::image::Data]) -> Self {
-        let image = &images[texture.source().index()];
-
-        let format = match image.format {
-            gltf::image::Format::R8 => wgpu::TextureFormat::R8Unorm,
-            gltf::image::Format::R8G8 => wgpu::TextureFormat::Rg8Unorm,
-            gltf::image::Format::R8G8B8A8 => wgpu::TextureFormat::Rgba8Unorm,
-            gltf::image::Format::R16 => wgpu::TextureFormat::R16Unorm,
-            gltf::image::Format::R16G16 => wgpu::TextureFormat::Rg16Unorm,
-            gltf::image::Format::R16G16B16A16 => wgpu::TextureFormat::Rgba16Unorm,
-            gltf::image::Format::R32G32B32A32FLOAT => wgpu::TextureFormat::Rgba32Float,
-            _ => unimplemented!(),
-        };
-
+    pub fn from_data(wgpu: &WGPUContext, format: wgpu::TextureFormat, width: u32, height: u32, data: &[u8]) -> Self {
         let texture = wgpu.device.create_texture_with_data(
             &wgpu.queue,
             &wgpu::TextureDescriptor {
                 label: Some("Texture"),
                 size: wgpu::Extent3d {
-                    width: image.width,
-                    height: image.height,
+                    width,
+                    height,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
@@ -117,7 +104,7 @@ impl Texture {
                 view_formats: &[format],
             },
             wgpu::util::TextureDataOrder::LayerMajor,
-            image.pixels.as_slice(),
+            data,
         );
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());

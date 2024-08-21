@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use winit::window::Window;
 
-use crate::scene::{Scene, SceneBindGroup};
+use crate::scene::{Scene, SceneBuffers};
 use crate::common::{App, CameraController, ImGuiContext, PerformanceMetrics, Texture, WGPUContext};
 
 use crate::blit_renderer::BlitRenderer;
@@ -17,7 +17,7 @@ pub struct MainApp {
     metrics: PerformanceMetrics<120>,
 
     depth_texture: Texture,
-    scene: SceneBindGroup,
+    scene: SceneBuffers,
     fullscreen_renderer: BlitRenderer,
     mesh_renderer: MeshRenderer,
     raytracer: Raytracer,
@@ -31,8 +31,8 @@ impl App for MainApp {
         let metrics = PerformanceMetrics::default();
 
         let mut scene_data = Scene::default();
-        scene_data.parse_gltf(Path::new("assets/bunny.glb")).unwrap();
-        let scene = SceneBindGroup::from_scene(&wgpu, &mut scene_data);
+        scene_data.parse_gltf(Path::new("assets/testscene.glb")).unwrap();
+        let scene = SceneBuffers::from_scene(&wgpu, &mut scene_data);
 
         let camera = CameraController::new(&wgpu);
 

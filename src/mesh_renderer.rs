@@ -1,5 +1,5 @@
 use crate::common::{CameraController, WGPUContext};
-use crate::scene::{SceneBindGroup, Vertex};
+use crate::scene::{SceneBuffers, Vertex};
 
 pub struct MeshRenderer {
     pipeline: wgpu::RenderPipeline,
@@ -62,7 +62,7 @@ impl MeshRenderer {
         }
     }
 
-    pub fn render<'r>(&'r self, render_pass: &mut wgpu::RenderPass<'r>, scene: &SceneBindGroup, camera: &CameraController) {
+    pub fn render<'r>(&'r self, render_pass: &mut wgpu::RenderPass<'r>, scene: &SceneBuffers, camera: &CameraController) {
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, camera.bind_group(), &[]);
         scene.draw(render_pass);
