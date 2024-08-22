@@ -15,17 +15,17 @@ pub trait BVHPrimitive {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::NoUninit)]
 pub struct BVHNode {
-    min: Vec3,
+    pub min: Vec3,
     /// If this is a leaf node, this is the index of the first triangle index.
     /// If this is an inner node, this is the index of the left child node.
-    start: u32,
-    max: Vec3,
-    end: u32,
+    pub start: u32,
+    pub max: Vec3,
+    pub end: u32,
 }
 
 impl BVHNode {
     fn new_leaf(primitives: &[impl BVHPrimitive], range: Range<u32>) -> Self {
-        debug_assert!(range.end > range.start, "{:#?}", range);
+        debug_assert!(range.end > range.start, "No leaf: {:#?}", range);
 
         let mut min: Vec3 = primitives[range.start as usize].min();
         let mut max: Vec3 = primitives[range.start as usize].max();
@@ -39,12 +39,12 @@ impl BVHNode {
     }
 
     fn range(&self) -> Range<u32> {
-        debug_assert!(self.end > self.start);
+        debug_assert!(self.end > self.start, "No leaf: {:#?}", self);
         self.start..self.end
     }
 
     fn count(&self) -> u32 {
-        debug_assert!(self.end > self.start);
+        debug_assert!(self.end > self.start, "No leaf: {:#?}", self);
         self.end - self.start
     }
 
@@ -62,7 +62,7 @@ impl BVHNode {
     }
 
     fn cost(&self) -> f32 {
-        debug_assert!(self.is_leaf());
+        debug_assert!(self.end > self.start, "No leaf: {:#?}", self);
         let extent = self.max - self.min;
         if extent.is_finite() {
             let area = extent.x * extent.y + extent.x * extent.z + extent.y * extent.z;
@@ -71,15 +71,6 @@ impl BVHNode {
             f32::INFINITY
         }
     }
-}
-
-impl BVHPrimitive for BVHNode {
-    fn min(&self) -> Vec3 {self.min}
-    fn max(&self) -> Vec3 {self.max}
-}
-
-pub struct BVHTree {
-    nodes: Vec<BVHNode>,
 }
 
 pub struct Triangle {
@@ -93,6 +84,28 @@ impl BVHPrimitive for Triangle {
     fn min(&self) -> Vec3 {self.min}
     fn max(&self) -> Vec3 {self.max}
     fn center(&self) -> Vec3 {self.center}
+}
+
+pub fn build_triangle_cache(vertices: &[Vertex], indices: &[u32]) -> Vec<Triangle> {
+    let timer = std::time::Instant::now();
+    let mut triangles = Vec::with_capacity(indices.len() as usize / 3);
+    for triangle in indices.chunks_exact(3) {
+        let v0 = vertices[triangle[0] as usize].position.xyz();
+        let v1 = vertices[triangle[1] as usize].position.xyz();
+        let v2 = vertices[triangle[2] as usize].position.xyz();
+        let center = (v0 + v1 + v2) / 3.0;
+        let min = v0.min(v1).min(v2);
+        let max = v0.max(v1).max(v2);
+        triangles.push(Triangle {center, min, max, indices: triangle.try_into().unwrap()});
+    }
+    log::info!("Built triangle cache in {:?}", timer.elapsed());
+    triangles
+}
+
+pub fn flatten_triangle_list(triangles: &[Triangle], indices: &mut[u32]) {
+    for (i, index) in triangles.iter().flat_map(|t| t.indices).enumerate() {
+        indices[i] = index;
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -136,65 +149,59 @@ impl Bin {
     }
 }
 
-pub struct Split {
-    axis: usize,
-    mid: f32,
-}
-
 const MAX_DEPTH: u32 = 32;
 const N_BINS: usize = 16;
 
-pub fn build_triangle_cache(vertices: &[Vertex], indices: &[u32]) -> Vec<Triangle> {
-    let timer = std::time::Instant::now();
-    let mut triangles = Vec::with_capacity(indices.len() as usize / 3);
-    for triangle in indices.chunks_exact(3) {
-        let v0 = vertices[triangle[0] as usize].position.xyz();
-        let v1 = vertices[triangle[1] as usize].position.xyz();
-        let v2 = vertices[triangle[2] as usize].position.xyz();
-        let center = (v0 + v1 + v2) / 3.0;
-        let min = v0.min(v1).min(v2);
-        let max = v0.max(v1).max(v2);
-        triangles.push(Triangle {center, min, max, indices: triangle.try_into().unwrap()});
-    }
-    log::info!("Built triangle cache in {:?}", timer.elapsed());
-    triangles
+#[derive(Default)]
+pub struct BVHTree {
+    nodes: Vec<BVHNode>,
 }
 
-pub fn flatten_triangle_list(triangles: &[Triangle], indices: &mut[u32]) {
-    for (i, index) in triangles.iter().flat_map(|t| t.indices).enumerate() {
-        indices[i] = index;
+impl BVHTree {
+    pub fn append(&mut self, primitives: &mut[impl BVHPrimitive], range: Range<u32>) -> u32 {
+        let timer = std::time::Instant::now();
+        let mut stack = Vec::new();
+
+        let parent_index = self.nodes.len() as u32;
+        let parent = BVHNode::new_leaf(primitives, range);
+        self.nodes.push(parent);
+        stack.push((0u32, parent_index));
+
+        // TODO: Make parallel (maybe using rayon?)
+        while let Some((depth, node_index)) = stack.pop() {
+            if depth >= MAX_DEPTH {
+                continue;
+            }
+            let node = &self.nodes[node_index as usize];
+            if let Some((left, right)) = split_node(primitives, node) {
+                let left_index = self.nodes.len() as u32;
+                let right_index = left_index + 1;
+                self.nodes[node_index as usize].make_inner(left_index);
+                self.nodes.push(left);
+                self.nodes.push(right);
+                stack.push((depth + 1, left_index));
+                stack.push((depth + 1, right_index));
+            }
+        }
+
+        log::info!("Built BVH in {:?}", timer.elapsed());
+        parent_index
+    }
+
+    pub fn nodes(&self) -> &[BVHNode] {
+        &self.nodes
     }
 }
 
-pub fn build_bvh(primitives: &mut[impl BVHPrimitive], range: Range<u32>) -> Vec<BVHNode> {
-    let timer = std::time::Instant::now();
-    let mut nodes = Vec::new();
-    let mut stack = Vec::new();
+pub fn build_bvh(primitives: &mut[impl BVHPrimitive], range: Range<u32>) -> BVHTree {
+    let mut tree = BVHTree::default();
+    tree.append(primitives, range);
+    tree
+}
 
-    let parent = BVHNode::new_leaf(primitives, range);
-    nodes.push(parent);
-    stack.push((0u32, 0u32));
-
-    // TODO: Make parallel (maybe using rayon?)
-    while let Some((depth, node_index)) = stack.pop() {
-        if depth >= MAX_DEPTH {
-            continue;
-        }
-        let node = &nodes[node_index as usize];
-        if let Some((left, right)) = split_node(primitives, node) {
-            let left_index = nodes.len() as u32;
-            let right_index = left_index + 1;
-            nodes[node_index as usize].make_inner(left_index);
-            nodes.push(left);
-            nodes.push(right);
-            stack.push((depth + 1, left_index));
-            stack.push((depth + 1, right_index));
-        }
-    }
-
-    log::info!("Built BVH in {:?}", timer.elapsed());
-
-    nodes
+struct Split {
+    axis: usize,
+    mid: f32,
 }
 
 fn split_node(primitives: &mut[impl BVHPrimitive], parent: &BVHNode) -> Option<(BVHNode, BVHNode)> {

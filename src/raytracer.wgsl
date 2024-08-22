@@ -11,12 +11,6 @@ struct CameraData {
 @binding(0)
 var<uniform> camera: CameraData;
 
-struct Vertex {
-    position: vec4f,
-    normal: vec4f,
-    texcoord: vec4f,
-};
-
 struct BVHNode {
     min: vec3f,
     start: u32,
@@ -26,14 +20,37 @@ struct BVHNode {
 
 @group(2)
 @binding(0)
-var<storage, read> bvh: array<BVHNode>;
+var<storage, read> blas: array<BVHNode>;
 
 @group(2)
 @binding(1)
-var<storage, read> vertices: array<Vertex>;
+var<storage, read> tlas: array<BVHNode>;
+
+struct Instance {
+    world_to_local: mat4x4f,
+    color: vec4f,
+    roughness: f32,
+    metallic: f32,
+    emissive: f32,
+    node: u32,
+};
 
 @group(2)
 @binding(2)
+var<storage, read> instances: array<Instance>;
+
+struct Vertex {
+    position: vec4f,
+    normal: vec4f,
+    texcoord: vec4f,
+};
+
+@group(2)
+@binding(3)
+var<storage, read> vertices: array<Vertex>;
+
+@group(2)
+@binding(4)
 var<storage, read> indices: array<u32>;
 
 const COMPUTE_SIZE: u32 = 8u;
@@ -93,24 +110,30 @@ fn intersect_AABB(ray: Ray, aabb: AABB) -> f32 {
 }
 
 struct HitInfo {
-    dist: f32,
     position: vec3f,
+    dist: f32,
     normal: vec3f,
-    texcoord: vec2f,
     n_aabb: u32,
+    texcoord: vec2f,
     n_tri: u32,
+    roughness: f32,
+    color: vec4f,
+    metallic: f32,
 };
 
-fn intersect_BVH(ray: Ray) -> HitInfo {
+fn no_hit_info() -> HitInfo {
+    return HitInfo(vec3f(0.0), NO_HIT, vec3f(0.0), 0u, vec2f(0.0), 0u, 0.0, vec4f(0.0), 0.0);
+}
+
+fn intersect_TLAS(ray: Ray) -> HitInfo {
     var stack: array<u32, 32>;
 
-    var hit = HitInfo(NO_HIT, vec3f(0.0), vec3f(0.0), vec2f(0.0), 0u, 0u);
+    var hit = no_hit_info();
 
     // Init stack with top node
     var i = 0u;
-
     let index_top = 0u;
-    let top = bvh[index_top];
+    let top = tlas[index_top];
     let dist_top = intersect_AABB(ray, AABB(top.min, top.max));
     hit.n_aabb += 1u;
     if dist_top < hit.dist {
@@ -121,7 +144,81 @@ fn intersect_BVH(ray: Ray) -> HitInfo {
     while i > 0u {
         // Pop next node from stack
         i -= 1u;
-        var node = bvh[stack[i]];
+        var node = tlas[stack[i]];
+        let is_leaf = node.end > 0u;
+        if is_leaf { // Leaf node
+            for (var j = node.start; j < node.end; j += 1u) {
+                let instance = instances[j];
+                let local_origin = instances[j].world_to_local * vec4f(ray.origin, 1.0);
+                let local_direction = instances[j].world_to_local * vec4f(ray.direction, 0.0);
+                let local_ray = Ray(local_origin.xyz, local_direction.xyz, 1.0 / local_direction.xyz);
+                let hit_local = intersect_BLAS(local_ray, instance.node);
+                hit.n_aabb += hit_local.n_aabb;
+                hit.n_tri += hit_local.n_tri;
+                if hit_local.dist < hit.dist {
+                    hit.dist = hit_local.dist;
+                    hit.position = ray.origin + hit.dist * ray.direction;
+                    hit.normal = normalize((instance.world_to_local * vec4f(hit_local.normal, 0.0)).xyz);
+                    hit.texcoord = hit_local.texcoord;
+                    hit.color = instance.color;
+                    hit.roughness = instance.roughness;
+                    hit.metallic = instance.metallic;
+                }
+            }
+            // FIXME: This breaks hit info when AABBs overlap
+            if hit.dist < NO_HIT { return hit; } // Early exit, possible because we assured that the stack is sorted
+        } else {
+            let index_left = node.start;
+            let left = tlas[index_left];
+            let dist_left = intersect_AABB(ray, AABB(left.min, left.max));
+
+            let index_right = index_left + 1u;
+            let right = tlas[index_right];
+            let dist_right = intersect_AABB(ray, AABB(right.min, right.max));
+            hit.n_aabb += 2u;
+
+            let is_left_nearest = dist_left < dist_right;
+
+            let dist_far = select(dist_left, dist_right, is_left_nearest);
+            let index_far = select(index_left, index_right, is_left_nearest);
+            let dist_near = select(dist_right, dist_left, is_left_nearest);
+            let index_near = select(index_right, index_left, is_left_nearest);
+
+            // Look at far node last
+            if dist_far < hit.dist {
+                stack[i] = index_far;
+                i += 1u;
+            }
+
+            // Look at near node first
+            if dist_near < hit.dist {
+                stack[i] = index_near;
+                i += 1u;
+            }
+        }
+    }
+    return hit;
+}
+
+fn intersect_BLAS(ray: Ray, index_top: u32) -> HitInfo {
+    var stack: array<u32, 32>;
+
+    var hit = no_hit_info();
+
+    // Init stack with top node
+    var i = 0u;
+    let top = blas[index_top];
+    let dist_top = intersect_AABB(ray, AABB(top.min, top.max));
+    hit.n_aabb += 1u;
+    if dist_top < hit.dist {
+        stack[i] = index_top;
+        i += 1u;
+    }
+
+    while i > 0u {
+        // Pop next node from stack
+        i -= 1u;
+        var node = blas[stack[i]];
         let is_leaf = node.end > 0u;
         if is_leaf { // Leaf node
             for (var j = node.start * 3u; j < node.end * 3u; j += 3u) {
@@ -138,13 +235,17 @@ fn intersect_BVH(ray: Ray) -> HitInfo {
                     hit.texcoord = mat3x2f(v0.texcoord.xy, v1.texcoord.xy, v2.texcoord.xy) * barycentrics;
                 }
             }
+            // FIXME: This breaks hit info when AABBs overlap
+            // Should be
+            // if hit.dist < dist_far { return hit; }
+            //if hit.dist < NO_HIT { return hit; } // Early exit, possible because we assured that the stack is sorted
         } else {
             let index_left = node.start;
-            let left = bvh[index_left];
+            let left = blas[index_left];
             let dist_left = intersect_AABB(ray, AABB(left.min, left.max));
 
             let index_right = index_left + 1u;
-            let right = bvh[index_right];
+            let right = blas[index_right];
             let dist_right = intersect_AABB(ray, AABB(right.min, right.max));
             hit.n_aabb += 2u;
 
@@ -188,14 +289,43 @@ fn generate_ray(id: vec3u) -> Ray {
     return Ray(pos, dir, 1.0 / dir);
 }
 
+fn intersect_Instances(ray: Ray) -> HitInfo {
+    var hit = no_hit_info();
+    for (var j = 0u; j < arrayLength(&instances); j += 1u) {
+        let instance = instances[j];
+        let local_origin = instances[j].world_to_local * vec4f(ray.origin, 1.0);
+        let local_direction = instances[j].world_to_local * vec4f(ray.direction, 0.0);
+        let local_ray = Ray(local_origin.xyz, local_direction.xyz, 1.0 / local_direction.xyz);
+        let hit_local = intersect_BLAS(local_ray, instance.node);
+        hit.n_aabb += hit_local.n_aabb;
+        hit.n_tri += hit_local.n_tri;
+        if hit_local.dist < hit.dist {
+            hit.dist = hit_local.dist;
+            hit.position = ray.origin + hit.dist * ray.direction;
+            hit.normal = normalize((instance.world_to_local * vec4f(hit_local.normal, 0.0)).xyz);
+            hit.texcoord = hit_local.texcoord;
+        }
+    }
+    return hit;
+}
+
 @compute
 @workgroup_size(COMPUTE_SIZE, COMPUTE_SIZE)
 fn main(@builtin(global_invocation_id) id: vec3u) {
     // var color = textureLoad(output, vec2i(id.xy));
     let ray = generate_ray(id);
-    let hit = intersect_BVH(ray);
+
+    let hit = intersect_TLAS(ray);
+    //let hit = intersect_Instances(ray);
+    //let hit = intersect_BLAS(ray, 30903u);
+    //let hit = intersect_BLAS(ray, 0u);
+    
     let is_hit = (hit.dist != NO_HIT);
-    textureStore(output, id.xy, vec4f(f32(hit.n_aabb) * 0.05, select(0.0, 1.0, is_hit), f32(hit.n_tri) * 0.1, 1.0));
-    //textureStore(output, id.xy, vec4f(hit.normal * 0.5 + 0.5, 1.0));
+    textureStore(output, id.xy, vec4f(f32(hit.n_aabb) * 0.02, select(0.0, 1.0, is_hit), f32(hit.n_tri) * 0.2, 1.0));
+    //textureStore(output, id.xy, hit.color);
+    //textureStore(output, id.xy, vec4f(vec3f(hit.roughness), 1.0));
+    //textureStore(output, id.xy, vec4f(vec3f(hit.metallic), 1.0));
+    //textureStore(output, id.xy, vec4f(hit.normal * 0.5 + 0.5, 1.0)); // TODO: Fix barycentrics
     //textureStore(output, id.xy, vec4f(hit.texcoord, 0.0, 1.0));
+    //textureStore(output, id.xy, vec4f(hit.position, 1.0));
 }

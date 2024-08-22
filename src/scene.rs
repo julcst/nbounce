@@ -2,9 +2,10 @@ use std::collections::HashMap;
 use std::{mem, ops::Range, path::Path};
 
 use glam::{Mat4, Vec2, Vec3, Vec4};
+use wgpu::core::instance;
 use wgpu::util::DeviceExt;
 
-use crate::bvh;
+use crate::bvh::{self, BVHPrimitive, BVHTree};
 
 use crate::common::{Texture, WGPUContext};
 
@@ -43,14 +44,14 @@ impl Vertex {
     }
 }
 
-#[derive(Debug)]
-pub struct Instance {
-    indices: Range<u32>,
+#[derive(Clone, Debug)]
+pub struct Primitive {
     local_to_world: Mat4,
     color: Vec4,
     roughness: f32,
     metallic: f32,
     emissive: f32,
+    index_range: Range<u32>,
 }
 
 #[derive(Debug)]
@@ -88,7 +89,7 @@ impl std::error::Error for MeshError {}
 pub struct Scene {
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
-    instances: Vec<Instance>,
+    primitives: Vec<Primitive>,
 }
 
 impl Scene {
@@ -159,6 +160,7 @@ impl Scene {
         for node in gltf.nodes() {
             if let Some(mesh) = node.mesh() {
                 let local_to_world = Mat4::from_cols_array_2d(&node.transform().matrix());
+
                 for primitive in mesh.primitives() {
                     let material = primitive.material();
                     let emissive = Vec3::from(material.emissive_factor());
@@ -168,8 +170,9 @@ impl Scene {
                     } else {
                         Vec4::from_array(material.pbr_metallic_roughness().base_color_factor())
                     };
-                    self.instances.push(Instance { 
-                        indices: geometry_map.get(&(mesh.index(), primitive.index())).unwrap().clone(),
+                    let index_range = geometry_map.get(&(mesh.index(), primitive.index())).unwrap().to_owned();
+                    self.primitives.push(Primitive { 
+                        index_range,
                         local_to_world,
                         color,
                         roughness: material.pbr_metallic_roughness().roughness_factor(),
@@ -182,33 +185,115 @@ impl Scene {
             }
         }
 
-        log::info!("Scene: {:#?}", self.instances);
+        log::info!("Scene: {:#?}", self.primitives);
 
         log::info!("Processed {:?} in {:?}", path, time.elapsed());
         Ok(())
     }
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::NoUninit)]
+struct Instance {
+    world_to_local: Mat4,
+    color: Vec4,
+    roughness: f32,
+    metallic: f32,
+    emissive: f32,
+    node: u32,
+}
+
+struct InstanceWithBounds {
+    instance: Instance,
+    world_min: Vec3,
+    world_max: Vec3,
+}
+
+impl InstanceWithBounds {
+    fn approximate_from_instance(instance: Instance, local_min: Vec3, local_max: Vec3) -> Self {
+        // Transform all 8 corners of the local bounds to world space and find the new bounds
+        let mut world_min = Vec3::splat(f32::INFINITY);
+        let mut world_max = Vec3::splat(f32::NEG_INFINITY);
+        let local_to_world = instance.world_to_local.inverse();
+        for i in 0..8u8 {
+            let local = Vec3::new(
+                if i & 1 == 0 { local_min.x } else { local_max.x },
+                if i & 2 == 0 { local_min.y } else { local_max.y },
+                if i & 4 == 0 { local_min.z } else { local_max.z },
+            );
+            let world = local_to_world.transform_point3(local);
+            world_min = world_min.min(world);
+            world_max = world_max.max(world);
+        }
+        Self {
+            instance,
+            world_min,
+            world_max,
+        }
+    }
+}
+
+impl BVHPrimitive for InstanceWithBounds {
+    fn min(&self) -> Vec3 {
+        self.world_min
+    }
+    fn max(&self) -> Vec3 {
+        self.world_max
+    }
+}
 
 pub struct SceneBuffers {
+    primitives: Vec<Primitive>,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
-    indices: Range<u32>,
     group: wgpu::BindGroup,
     layout: wgpu::BindGroupLayout,
 }
 
 impl SceneBuffers {
     pub fn from_scene(wgpu: &WGPUContext, scene: &mut Scene) -> Self {
-        let indices = scene.instances[1].indices.to_owned();
-
         let mut triangles = bvh::build_triangle_cache(&scene.vertices, &scene.indices);
-        let bvh = bvh::build_bvh(&mut triangles, indices.start / 3..indices.end / 3);
+        let mut instances = Vec::new();
+
+        let mut blas = BVHTree::default();
+        for primitive in &scene.primitives {
+            let triangle_range = primitive.index_range.start / 3..primitive.index_range.end / 3;
+            let node = blas.append(&mut triangles, triangle_range);
+            let local_min = blas.nodes()[node as usize].min;
+            let local_max = blas.nodes()[node as usize].max;
+            instances.push(InstanceWithBounds::approximate_from_instance(Instance {
+                world_to_local: primitive.local_to_world.inverse(),
+                color: primitive.color,
+                roughness: primitive.roughness,
+                metallic: primitive.metallic,
+                emissive: primitive.emissive,
+                node,
+            }, local_min, local_max));
+        }
+
+        let range = 0..instances.len() as u32;
+        let tlas = bvh::build_bvh(&mut instances, range);
+
+        // Apply triangle permutation to indices
         bvh::flatten_triangle_list(&triangles, &mut scene.indices);
 
-        let nodes = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("BVH Nodes"),
-            contents: bytemuck::cast_slice(&bvh),
+        let stripped_instances: Vec<_> = instances.into_iter().map(|i| i.instance).collect();
+
+        let blas_buffer = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("BLAS Nodes"),
+            contents: bytemuck::cast_slice(blas.nodes()),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let tlas_buffer = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("TLAS Nodes"),
+            contents: bytemuck::cast_slice(tlas.nodes()),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
+        let instance_buffer = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Instances"),
+            contents: bytemuck::cast_slice(&stripped_instances),
             usage: wgpu::BufferUsages::STORAGE,
         });
 
@@ -261,6 +346,26 @@ impl SceneBuffers {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -271,7 +376,7 @@ impl SceneBuffers {
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &nodes,
+                        buffer: &blas_buffer,
                         offset: 0,
                         size: None,
                     }),
@@ -279,13 +384,29 @@ impl SceneBuffers {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &vertex_buffer,
+                        buffer: &tlas_buffer,
                         offset: 0,
                         size: None,
                     }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &instance_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &vertex_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &index_buffer,
                         offset: 0,
@@ -296,9 +417,9 @@ impl SceneBuffers {
         });
 
         Self {
+            primitives: scene.primitives.clone(),
             vertex_buffer,
             index_buffer,
-            indices,
             group,
             layout,
         }
@@ -315,6 +436,8 @@ impl SceneBuffers {
     pub fn draw(&self, render_pass: &mut wgpu::RenderPass) {
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        render_pass.draw_indexed(self.indices.to_owned(), 0, 0..1);
+        for primitive in &self.primitives {
+            render_pass.draw_indexed(primitive.index_range.clone(), 0, 0..1);
+        }
     }
 }
