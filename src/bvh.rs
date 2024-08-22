@@ -5,9 +5,11 @@ use glam::{UVec3, Vec3, Vec4Swizzles};
 use crate::scene::Vertex;
 
 pub trait BVHPrimitive {
-    fn min(&self) -> &Vec3;
-    fn max(&self) -> &Vec3;
-    fn count(&self) -> u32 {1}
+    fn min(&self) -> Vec3;
+    fn max(&self) -> Vec3;
+    fn center(&self) -> Vec3 {
+        (self.min() + self.max()) * 0.5
+    }
 }
 
 #[repr(C)]
@@ -22,25 +24,27 @@ pub struct BVHNode {
 }
 
 impl BVHNode {
-    fn new_leaf(triangles: &[Triangle], range: Range<u32>) -> Self {
-        debug_assert_ne!(range.end, 0);
+    fn new_leaf(primitives: &[impl BVHPrimitive], range: Range<u32>) -> Self {
+        debug_assert!(range.end > range.start, "{:#?}", range);
 
-        let mut min: Vec3 = triangles[range.start as usize].min;
-        let mut max: Vec3 = triangles[range.start as usize].max;
+        let mut min: Vec3 = primitives[range.start as usize].min();
+        let mut max: Vec3 = primitives[range.start as usize].max();
 
         for i in range.start + 1..range.end {
-            min = min.min(triangles[i as usize].min);
-            max = max.max(triangles[i as usize].max);
+            min = min.min(primitives[i as usize].min());
+            max = max.max(primitives[i as usize].max());
         }
 
         Self { min, start: range.start, max, end: range.end, }
     }
 
     fn range(&self) -> Range<u32> {
+        debug_assert!(self.end > self.start);
         self.start..self.end
     }
 
     fn count(&self) -> u32 {
+        debug_assert!(self.end > self.start);
         self.end - self.start
     }
 
@@ -69,6 +73,11 @@ impl BVHNode {
     }
 }
 
+impl BVHPrimitive for BVHNode {
+    fn min(&self) -> Vec3 {self.min}
+    fn max(&self) -> Vec3 {self.max}
+}
+
 pub struct BVHTree {
     nodes: Vec<BVHNode>,
 }
@@ -81,8 +90,9 @@ pub struct Triangle {
 }
 
 impl BVHPrimitive for Triangle {
-    fn min(&self) -> &Vec3 {&self.min}
-    fn max(&self) -> &Vec3 {&self.max}
+    fn min(&self) -> Vec3 {self.min}
+    fn max(&self) -> Vec3 {self.max}
+    fn center(&self) -> Vec3 {self.center}
 }
 
 #[derive(Clone, Copy)]
@@ -103,9 +113,9 @@ impl Default for Bin {
 }
 
 impl Bin {
-    fn include(&mut self, triangle: &Triangle) {
-        self.min = self.min.min(triangle.min);
-        self.max = self.max.max(triangle.max);
+    fn include(&mut self, primitive: &impl BVHPrimitive) {
+        self.min = self.min.min(primitive.min());
+        self.max = self.max.max(primitive.max());
         self.count += 1;
     }
 
@@ -150,13 +160,18 @@ pub fn build_triangle_cache(vertices: &[Vertex], indices: &[u32]) -> Vec<Triangl
     triangles
 }
 
-pub fn build_bvh(triangles: &mut[Triangle], range: Range<u32>) -> Vec<BVHNode> {
+pub fn flatten_triangle_list(triangles: &[Triangle], indices: &mut[u32]) {
+    for (i, index) in triangles.iter().flat_map(|t| t.indices).enumerate() {
+        indices[i] = index;
+    }
+}
+
+pub fn build_bvh(primitives: &mut[impl BVHPrimitive], range: Range<u32>) -> Vec<BVHNode> {
     let timer = std::time::Instant::now();
     let mut nodes = Vec::new();
     let mut stack = Vec::new();
 
-    // TODO: Fix
-    let parent = BVHNode::new_leaf(triangles, range);
+    let parent = BVHNode::new_leaf(primitives, range);
     nodes.push(parent);
     stack.push((0u32, 0u32));
 
@@ -166,7 +181,7 @@ pub fn build_bvh(triangles: &mut[Triangle], range: Range<u32>) -> Vec<BVHNode> {
             continue;
         }
         let node = &nodes[node_index as usize];
-        if let Some((left, right)) = split_node(triangles, node) {
+        if let Some((left, right)) = split_node(primitives, node) {
             let left_index = nodes.len() as u32;
             let right_index = left_index + 1;
             nodes[node_index as usize].make_inner(left_index);
@@ -182,18 +197,12 @@ pub fn build_bvh(triangles: &mut[Triangle], range: Range<u32>) -> Vec<BVHNode> {
     nodes
 }
 
-pub fn flatten_triangle_list(triangles: &[Triangle], indices: &mut[u32]) {
-    for (i, index) in triangles.iter().flat_map(|t| t.indices).enumerate() {
-        indices[i] = index;
-    }
-}
-
-fn split_node(triangles: &mut [Triangle], parent: &BVHNode) -> Option<(BVHNode, BVHNode)> {
+fn split_node(primitives: &mut[impl BVHPrimitive], parent: &BVHNode) -> Option<(BVHNode, BVHNode)> {
     match parent.count() {
-        0 | 1 => None, // No need to split, single triangle
-        2 => { // Just two triangles -> split manually
-            let left = BVHNode::new_leaf(triangles, parent.start..parent.start + 1);
-            let right = BVHNode::new_leaf(triangles, parent.start + 1..parent.start + 2);
+        0 | 1 => None, // No need to split, single primitve
+        2 => { // Just two primitives -> split manually
+            let left = BVHNode::new_leaf(primitives, parent.start..parent.start + 1);
+            let right = BVHNode::new_leaf(primitives, parent.start + 1..parent.start + 2);
             if left.cost() + right.cost() < parent.cost() {
                 Some((left, right))
             } else {
@@ -202,31 +211,31 @@ fn split_node(triangles: &mut [Triangle], parent: &BVHNode) -> Option<(BVHNode, 
         }
         // Ranges from 3 to 11 are small enough that brute forcing is faster than binning for N_BINS = 16
         3..=11 => { // Use Surface Area Heuristic to find best split by brute force
-            let s = find_best_split(triangles, parent)?;
-            split(triangles, parent, s)
+            let s = find_best_split(primitives, parent)?;
+            split(primitives, parent, s)
         }
         _ => { // Use Surface Area Heuristic to find best split by binning
-            let s = approximate_best_split(triangles, parent)?;
-            split(triangles, parent, s)
+            let s = approximate_best_split(primitives, parent)?;
+            split(primitives, parent, s)
         }
     }
 }
 
-fn find_best_split(triangles: &[Triangle], parent: &BVHNode) -> Option<Split> {
+fn find_best_split(primitives: &[impl BVHPrimitive], parent: &BVHNode) -> Option<Split> {
     let mut best_cost = parent.cost();
     let mut result = None;
 
     for axis in 0..3 {
         for i in parent.range() {
-            let mid = triangles[i as usize].center[axis];
+            let mid = primitives[i as usize].center()[axis];
             let mut left = Bin::default();
             let mut right = Bin::default();
             for j in parent.start..parent.end {
-                let triangle = &triangles[j as usize];
-                if triangle.center[axis] < mid {
-                    left.include(triangle);
+                let primitive = &primitives[j as usize];
+                if primitive.center()[axis] < mid {
+                    left.include(primitive);
                 } else {
-                    right.include(triangle);
+                    right.include(primitive);
                 }
             }
             let cost = left.cost() + right.cost();
@@ -240,19 +249,19 @@ fn find_best_split(triangles: &[Triangle], parent: &BVHNode) -> Option<Split> {
     result
 }
 
-fn approximate_best_split(triangles: &[Triangle], parent: &BVHNode) -> Option<Split> {
+fn approximate_best_split(primitives: &[impl BVHPrimitive], parent: &BVHNode) -> Option<Split> {
     // Build N_BINS bins per axis
     let mut bins = [Bin::default(); N_BINS * 3];
     let step = (parent.max - parent.min) / N_BINS as f32;
 
     for i in parent.range() {
-        let triangle = &triangles[i as usize];
+        let primitive = &primitives[i as usize];
 
-        let bin_indices = Vec3::floor((triangle.center - parent.min) / step).as_uvec3().min(UVec3::splat(N_BINS as u32 - 1));
+        let bin_indices = Vec3::floor((primitive.center() - parent.min) / step).as_uvec3().min(UVec3::splat(N_BINS as u32 - 1));
 
-        bins[bin_indices.x as usize].include(triangle);
-        bins[N_BINS + bin_indices.y as usize].include(triangle);
-        bins[N_BINS * 2 + bin_indices.z as usize].include(triangle);
+        bins[bin_indices.x as usize].include(primitive);
+        bins[N_BINS + bin_indices.y as usize].include(primitive);
+        bins[N_BINS * 2 + bin_indices.z as usize].include(primitive);
     }
 
     let mut best_cost = parent.cost();
@@ -287,18 +296,18 @@ fn longest_split(parent: &BVHNode) -> Split {
     Split { axis, mid }
 }
 
-fn split(triangles: &mut [Triangle], parent: &BVHNode, split: Split) -> Option<(BVHNode, BVHNode)> {
+fn split(primitives: &mut[impl BVHPrimitive], parent: &BVHNode, split: Split) -> Option<(BVHNode, BVHNode)> {
     let mut left = Bin::default();
     let mut right = Bin::default();
 
     for i in parent.range() {
-        let triangle = &triangles[i as usize];
-        let center = triangle.center[split.axis];
+        let primitive = &primitives[i as usize];
+        let center = primitive.center()[split.axis];
         if center < split.mid {
-            left.include(triangle);
-            triangles.swap(i as usize, parent.start as usize + left.count as usize - 1);
+            left.include(primitive);
+            primitives.swap(i as usize, parent.start as usize + left.count as usize - 1);
         } else {
-            right.include(triangle);
+            right.include(primitive);
         }
     }
 

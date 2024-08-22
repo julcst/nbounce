@@ -155,7 +155,7 @@ impl Scene {
         }
 
         log::info!("Primitives: {:#?}", geometry_map);
-
+        
         for node in gltf.nodes() {
             if let Some(mesh) = node.mesh() {
                 let local_to_world = Mat4::from_cols_array_2d(&node.transform().matrix());
@@ -200,10 +200,10 @@ pub struct SceneBuffers {
 
 impl SceneBuffers {
     pub fn from_scene(wgpu: &WGPUContext, scene: &mut Scene) -> Self {
-        let indices = scene.instances[0].indices.to_owned();
+        let indices = scene.instances[1].indices.to_owned();
 
         let mut triangles = bvh::build_triangle_cache(&scene.vertices, &scene.indices);
-        let bvh = bvh::build_bvh(&mut triangles, indices.start / 3..indices.len() as u32 / 3);
+        let bvh = bvh::build_bvh(&mut triangles, indices.start / 3..indices.end / 3);
         bvh::flatten_triangle_list(&triangles, &mut scene.indices);
 
         let nodes = wgpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

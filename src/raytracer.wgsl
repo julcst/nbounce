@@ -155,11 +155,13 @@ fn intersect_BVH(ray: Ray) -> HitInfo {
             let dist_near = select(dist_right, dist_left, is_left_nearest);
             let index_near = select(index_right, index_left, is_left_nearest);
 
+            // Look at far node last
             if dist_far < hit.dist {
                 stack[i] = index_far;
                 i += 1u;
             }
 
+            // Look at near node first
             if dist_near < hit.dist {
                 stack[i] = index_near;
                 i += 1u;
