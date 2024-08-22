@@ -125,8 +125,13 @@ fn no_hit_info() -> HitInfo {
     return HitInfo(vec3f(0.0), NO_HIT, vec3f(0.0), 0u, vec2f(0.0), 0u, 0.0, vec4f(0.0), 0.0);
 }
 
+struct StackEntry {
+    index: u32,
+    dist: f32,
+};
+
 fn intersect_TLAS(ray: Ray) -> HitInfo {
-    var stack: array<u32, 32>;
+    var stack: array<StackEntry, 32>;
 
     var hit = no_hit_info();
 
@@ -137,14 +142,16 @@ fn intersect_TLAS(ray: Ray) -> HitInfo {
     let dist_top = intersect_AABB(ray, AABB(top.min, top.max));
     hit.n_aabb += 1u;
     if dist_top < hit.dist {
-        stack[i] = index_top;
+        stack[i] = StackEntry(index_top, dist_top);
         i += 1u;
     }
 
     while i > 0u {
         // Pop next node from stack
         i -= 1u;
-        var node = tlas[stack[i]];
+        var stack_entry = stack[i];
+        if stack_entry.dist >= hit.dist { continue; } // Skip if node is farther than current hit
+        var node = tlas[stack_entry.index];
         let is_leaf = node.end > 0u;
         if is_leaf { // Leaf node
             for (var j = node.start; j < node.end; j += 1u) {
@@ -165,34 +172,33 @@ fn intersect_TLAS(ray: Ray) -> HitInfo {
                     hit.metallic = instance.metallic;
                 }
             }
-            // FIXME: This breaks hit info when AABBs overlap
-            if hit.dist < NO_HIT { return hit; } // Early exit, possible because we assured that the stack is sorted
         } else {
             let index_left = node.start;
-            let left = tlas[index_left];
-            let dist_left = intersect_AABB(ray, AABB(left.min, left.max));
+            let left_node = tlas[index_left];
+            let left = StackEntry(index_left, intersect_AABB(ray, AABB(left_node.min, left_node.max)));
 
             let index_right = index_left + 1u;
-            let right = tlas[index_right];
-            let dist_right = intersect_AABB(ray, AABB(right.min, right.max));
+            let right_node = tlas[index_right];
+            let right = StackEntry(index_right, intersect_AABB(ray, AABB(right_node.min, right_node.max)));
+            
             hit.n_aabb += 2u;
 
-            let is_left_nearest = dist_left < dist_right;
-
-            let dist_far = select(dist_left, dist_right, is_left_nearest);
-            let index_far = select(index_left, index_right, is_left_nearest);
-            let dist_near = select(dist_right, dist_left, is_left_nearest);
-            let index_near = select(index_right, index_left, is_left_nearest);
+            var far = left;
+            var near = right;
+            if left.dist < right.dist {
+                far = right;
+                near = left;
+            }
 
             // Look at far node last
-            if dist_far < hit.dist {
-                stack[i] = index_far;
+            if far.dist < hit.dist {
+                stack[i] = far;
                 i += 1u;
             }
 
             // Look at near node first
-            if dist_near < hit.dist {
-                stack[i] = index_near;
+            if near.dist < hit.dist {
+                stack[i] = near;
                 i += 1u;
             }
         }
@@ -201,7 +207,7 @@ fn intersect_TLAS(ray: Ray) -> HitInfo {
 }
 
 fn intersect_BLAS(ray: Ray, index_top: u32) -> HitInfo {
-    var stack: array<u32, 32>;
+    var stack: array<StackEntry, 32>;
 
     var hit = no_hit_info();
 
@@ -211,14 +217,16 @@ fn intersect_BLAS(ray: Ray, index_top: u32) -> HitInfo {
     let dist_top = intersect_AABB(ray, AABB(top.min, top.max));
     hit.n_aabb += 1u;
     if dist_top < hit.dist {
-        stack[i] = index_top;
+        stack[i] = StackEntry(index_top, dist_top);
         i += 1u;
     }
 
     while i > 0u {
         // Pop next node from stack
         i -= 1u;
-        var node = blas[stack[i]];
+        var stack_entry = stack[i];
+        if stack_entry.dist >= hit.dist { continue; } // Skip if node is farther than current hit
+        var node = blas[stack_entry.index];
         let is_leaf = node.end > 0u;
         if is_leaf { // Leaf node
             for (var j = node.start * 3u; j < node.end * 3u; j += 3u) {
@@ -235,36 +243,33 @@ fn intersect_BLAS(ray: Ray, index_top: u32) -> HitInfo {
                     hit.texcoord = mat3x2f(v0.texcoord.xy, v1.texcoord.xy, v2.texcoord.xy) * barycentrics;
                 }
             }
-            // FIXME: This breaks hit info when AABBs overlap
-            // Should be
-            // if hit.dist < dist_far { return hit; }
-            //if hit.dist < NO_HIT { return hit; } // Early exit, possible because we assured that the stack is sorted
         } else {
             let index_left = node.start;
-            let left = blas[index_left];
-            let dist_left = intersect_AABB(ray, AABB(left.min, left.max));
+            let left_node = blas[index_left];
+            let left = StackEntry(index_left, intersect_AABB(ray, AABB(left_node.min, left_node.max)));
 
             let index_right = index_left + 1u;
-            let right = blas[index_right];
-            let dist_right = intersect_AABB(ray, AABB(right.min, right.max));
+            let right_node = blas[index_right];
+            let right = StackEntry(index_right, intersect_AABB(ray, AABB(right_node.min, right_node.max)));
+            
             hit.n_aabb += 2u;
 
-            let is_left_nearest = dist_left < dist_right;
-
-            let dist_far = select(dist_left, dist_right, is_left_nearest);
-            let index_far = select(index_left, index_right, is_left_nearest);
-            let dist_near = select(dist_right, dist_left, is_left_nearest);
-            let index_near = select(index_right, index_left, is_left_nearest);
+            var far = left;
+            var near = right;
+            if left.dist < right.dist {
+                far = right;
+                near = left;
+            }
 
             // Look at far node last
-            if dist_far < hit.dist {
-                stack[i] = index_far;
+            if far.dist < hit.dist {
+                stack[i] = far;
                 i += 1u;
             }
 
             // Look at near node first
-            if dist_near < hit.dist {
-                stack[i] = index_near;
+            if near.dist < hit.dist {
+                stack[i] = near;
                 i += 1u;
             }
         }
@@ -325,7 +330,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     //textureStore(output, id.xy, hit.color);
     //textureStore(output, id.xy, vec4f(vec3f(hit.roughness), 1.0));
     //textureStore(output, id.xy, vec4f(vec3f(hit.metallic), 1.0));
-    //textureStore(output, id.xy, vec4f(hit.normal * 0.5 + 0.5, 1.0)); // TODO: Fix barycentrics
+    //textureStore(output, id.xy, vec4f(hit.normal * 0.5 + 0.5, 1.0));
     //textureStore(output, id.xy, vec4f(hit.texcoord, 0.0, 1.0));
     //textureStore(output, id.xy, vec4f(hit.position, 1.0));
 }
