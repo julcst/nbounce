@@ -10,6 +10,7 @@ use crate::blit_renderer::BlitRenderer;
 use crate::mesh_renderer::MeshRenderer;
 use crate::raytracer::Raytracer;
 
+#[allow(dead_code)]
 pub struct MainApp {
     wgpu: WGPUContext,
     imgui: ImGuiContext,

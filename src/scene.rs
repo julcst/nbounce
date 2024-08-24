@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::{mem, ops::Range, path::Path};
 
 use glam::{Mat4, Vec2, Vec3, Vec4};
-use wgpu::core::instance;
 use wgpu::util::DeviceExt;
 
 use crate::bvh::{self, BVHPrimitive, BVHTree};
@@ -97,6 +96,7 @@ impl Scene {
         let time = std::time::Instant::now();
         let (gltf, buffers, _images) = gltf::import(path)?;
         log::info!("Loaded {:?} in {:?}", path, time.elapsed());
+        //log::info!("GLTF: {:#?}", gltf);
 
         let time = std::time::Instant::now();
 
@@ -155,7 +155,7 @@ impl Scene {
             }
         }
 
-        log::info!("Primitives: {:#?}", geometry_map);
+        //log::info!("Primitives: {:#?}", geometry_map);
         
         for node in gltf.nodes() {
             if let Some(mesh) = node.mesh() {
@@ -313,6 +313,8 @@ impl SceneBuffers {
             }
         );
 
+        let skybox = Texture::create_cubemap(wgpu, include_bytes!("../assets/kloppenheim_06.dds"));
+
         let layout = wgpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("BVH Bind Group Layout"),
             entries: &[
@@ -366,6 +368,22 @@ impl SceneBuffers {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::Cube,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
 
@@ -412,6 +430,14 @@ impl SceneBuffers {
                         offset: 0,
                         size: None,
                     }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(skybox.view()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::Sampler(skybox.sampler()),
                 },
             ],
         });

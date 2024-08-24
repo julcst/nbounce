@@ -53,10 +53,20 @@ var<storage, read> vertices: array<Vertex>;
 @binding(4)
 var<storage, read> indices: array<u32>;
 
+@group(2)
+@binding(5)
+var environment: texture_cube<f32>;
+
+@group(2)
+@binding(6)
+var environment_sampler: sampler;
+
 const COMPUTE_SIZE: u32 = 8u;
 const PI: f32 = 3.14159265359;
 const MAX_FLOAT: f32 = 0x1.fffffep+127f;
 const NO_HIT: f32 = MAX_FLOAT;
+const GAIN: f32 = 0.25;
+const EPS: f32 = 0.00000001;
 
 struct Ray {
     origin: vec3f,
@@ -68,8 +78,6 @@ struct AABB {
     min: vec3f,
     max: vec3f,
 };
-
-const EPS: f32 = 0.00000001;
 
 // Möller–Trumbore intersection algorithm
 fn intersect_triangle(ray: Ray, v0: vec3f, v1: vec3f, v2: vec3f) -> vec3f {
@@ -203,6 +211,9 @@ fn intersect_TLAS(ray: Ray) -> HitInfo {
             }
         }
     }
+    if hit.dist == NO_HIT {
+        hit.color = textureSampleLevel(environment, environment_sampler, ray.direction, 0.0);
+    }
     return hit;
 }
 
@@ -326,8 +337,8 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     //let hit = intersect_BLAS(ray, 0u);
     
     let is_hit = (hit.dist != NO_HIT);
-    textureStore(output, id.xy, vec4f(f32(hit.n_aabb) * 0.02, select(0.0, 1.0, is_hit), f32(hit.n_tri) * 0.2, 1.0));
-    //textureStore(output, id.xy, hit.color);
+    //textureStore(output, id.xy, vec4f(f32(hit.n_aabb) * 0.02, select(0.0, 1.0, is_hit), f32(hit.n_tri) * 0.2, 1.0));
+    textureStore(output, id.xy, hit.color * GAIN);
     //textureStore(output, id.xy, vec4f(vec3f(hit.roughness), 1.0));
     //textureStore(output, id.xy, vec4f(vec3f(hit.metallic), 1.0));
     //textureStore(output, id.xy, vec4f(hit.normal * 0.5 + 0.5, 1.0));

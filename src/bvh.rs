@@ -52,6 +52,7 @@ impl BVHNode {
         Self { min: bin.min, start, max: bin.max, end: start + bin.count, }
     }
 
+    #[allow(dead_code)]
     fn is_leaf(&self) -> bool {
         self.end > 0
     }
@@ -88,7 +89,7 @@ impl BVHPrimitive for Triangle {
 
 pub fn build_triangle_cache(vertices: &[Vertex], indices: &[u32]) -> Vec<Triangle> {
     let timer = std::time::Instant::now();
-    let mut triangles = Vec::with_capacity(indices.len() as usize / 3);
+    let mut triangles = Vec::with_capacity(indices.len() / 3);
     for triangle in indices.chunks_exact(3) {
         let v0 = vertices[triangle[0] as usize].position.xyz();
         let v1 = vertices[triangle[1] as usize].position.xyz();

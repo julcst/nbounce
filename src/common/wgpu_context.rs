@@ -35,7 +35,9 @@ impl WGPUContext {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("Device"),
-                    required_features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+                    required_features:
+                        wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES |
+                        wgpu::Features::TEXTURE_COMPRESSION_BC,
                     required_limits: wgpu::Limits::default(),
                     memory_hints: wgpu::MemoryHints::default(),
                 },
