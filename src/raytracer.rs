@@ -12,7 +12,7 @@ pub struct Raytracer {
 }
 
 impl Raytracer {
-    const RESOLUTION_FACTOR: f32 = 0.5;
+    const RESOLUTION_FACTOR: f32 = 0.75;
     const COMPUTE_SIZE: u32 = 8;
 
     pub fn new(wgpu: &WGPUContext, scene: &SceneBuffers, camera: &CameraController) -> Self {

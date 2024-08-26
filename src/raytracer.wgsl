@@ -1,15 +1,22 @@
-@group(0)
-@binding(0)
-var output: texture_storage_2d<rgba16float, read_write>;
+const COMPUTE_SIZE: u32 = 8u;
+const PI: f32 = 3.14159265359;
+const TWO_PI: f32 = 2.0 * PI;
+const MAX_FLOAT: f32 = 0x1.fffffep+127f;
+const NO_HIT: f32 = MAX_FLOAT;
+const EPS: f32 = 0.00000001;
+
+const GAIN: f32 = 0.25;
+const STACK_SIZE = 32u;
+const MAX_BOUNCES = 1u;
+
+@group(0) @binding(0) var output: texture_storage_2d<rgba16float, read_write>;
 
 struct CameraData {
     world_to_clip: mat4x4f,
     clip_to_world: mat4x4f,
 };
 
-@group(1)
-@binding(0)
-var<uniform> camera: CameraData;
+@group(1) @binding(0) var<uniform> camera: CameraData;
 
 struct BVHNode {
     min: vec3f,
@@ -18,16 +25,9 @@ struct BVHNode {
     end: u32,
 };
 
-@group(2)
-@binding(0)
-var<storage, read> blas: array<BVHNode>;
-
-@group(2)
-@binding(1)
-var<storage, read> tlas: array<BVHNode>;
-
 struct Instance {
     world_to_local: mat4x4f,
+    local_to_world: mat4x4f,
     color: vec4f,
     roughness: f32,
     metallic: f32,
@@ -35,38 +35,19 @@ struct Instance {
     node: u32,
 };
 
-@group(2)
-@binding(2)
-var<storage, read> instances: array<Instance>;
-
 struct Vertex {
     position: vec4f,
     normal: vec4f,
     texcoord: vec4f,
 };
 
-@group(2)
-@binding(3)
-var<storage, read> vertices: array<Vertex>;
-
-@group(2)
-@binding(4)
-var<storage, read> indices: array<u32>;
-
-@group(2)
-@binding(5)
-var environment: texture_cube<f32>;
-
-@group(2)
-@binding(6)
-var environment_sampler: sampler;
-
-const COMPUTE_SIZE: u32 = 8u;
-const PI: f32 = 3.14159265359;
-const MAX_FLOAT: f32 = 0x1.fffffep+127f;
-const NO_HIT: f32 = MAX_FLOAT;
-const GAIN: f32 = 0.25;
-const EPS: f32 = 0.00000001;
+@group(2) @binding(0) var<storage, read> blas: array<BVHNode>;
+@group(2) @binding(1) var<storage, read> tlas: array<BVHNode>;
+@group(2) @binding(2) var<storage, read> instances: array<Instance>;
+@group(2) @binding(3) var<storage, read> vertices: array<Vertex>;
+@group(2) @binding(4) var<storage, read> indices: array<u32>;
+@group(2) @binding(5) var environment: texture_cube<f32>;
+@group(2) @binding(6) var environment_sampler: sampler;
 
 struct Ray {
     origin: vec3f,
@@ -100,7 +81,7 @@ fn intersect_triangle(ray: Ray, v0: vec3f, v1: vec3f, v2: vec3f) -> vec3f {
         return vec3f(NO_HIT, NO_HIT, NO_HIT); // Outside
     }
     var t = inv_det * dot(edge2, q);
-    if t < 0 {
+    if t < 0.01 {
         return vec3f(NO_HIT, NO_HIT, NO_HIT); // Behind
     }
     return vec3f(t, u, v);
@@ -117,6 +98,8 @@ fn intersect_AABB(ray: Ray, aabb: AABB) -> f32 {
     return select(NO_HIT, t_near, t_near <= t_far && t_far >= 0.0);
 }
 
+const EMISSIVE = 1u;
+
 struct HitInfo {
     position: vec3f,
     dist: f32,
@@ -127,10 +110,11 @@ struct HitInfo {
     roughness: f32,
     color: vec4f,
     metallic: f32,
+    flags: u32,
 };
 
 fn no_hit_info() -> HitInfo {
-    return HitInfo(vec3f(0.0), NO_HIT, vec3f(0.0), 0u, vec2f(0.0), 0u, 0.0, vec4f(0.0), 0.0);
+    return HitInfo(vec3f(0.0), NO_HIT, vec3f(0.0), 0u, vec2f(0.0), 0u, 0.0, vec4f(0.0), 0.0, 0u);
 }
 
 struct StackEntry {
@@ -139,7 +123,7 @@ struct StackEntry {
 };
 
 fn intersect_TLAS(ray: Ray) -> HitInfo {
-    var stack: array<StackEntry, 32>;
+    var stack: array<StackEntry, STACK_SIZE>;
 
     var hit = no_hit_info();
 
@@ -173,7 +157,7 @@ fn intersect_TLAS(ray: Ray) -> HitInfo {
                 if hit_local.dist < hit.dist {
                     hit.dist = hit_local.dist;
                     hit.position = ray.origin + hit.dist * ray.direction;
-                    hit.normal = normalize((instance.world_to_local * vec4f(hit_local.normal, 0.0)).xyz);
+                    hit.normal = normalize(mat3(instances[j].local_to_world) * hit_local.normal);
                     hit.texcoord = hit_local.texcoord;
                     hit.color = instance.color;
                     hit.roughness = instance.roughness;
@@ -213,12 +197,13 @@ fn intersect_TLAS(ray: Ray) -> HitInfo {
     }
     if hit.dist == NO_HIT {
         hit.color = textureSampleLevel(environment, environment_sampler, ray.direction, 0.0);
+        hit.flags |= EMISSIVE;
     }
     return hit;
 }
 
 fn intersect_BLAS(ray: Ray, index_top: u32) -> HitInfo {
-    var stack: array<StackEntry, 32>;
+    var stack: array<StackEntry, STACK_SIZE>;
 
     var hit = no_hit_info();
 
@@ -305,12 +290,16 @@ fn generate_ray(id: vec3u) -> Ray {
     return Ray(pos, dir, 1.0 / dir);
 }
 
-fn intersect_Instances(ray: Ray) -> HitInfo {
+fn mat3(m: mat4x4f) -> mat3x3f {
+    return mat3x3f(m[0].xyz, m[1].xyz, m[2].xyz);
+}
+
+fn intersect_instances(ray: Ray) -> HitInfo {
     var hit = no_hit_info();
     for (var j = 0u; j < arrayLength(&instances); j += 1u) {
         let instance = instances[j];
         let local_origin = instances[j].world_to_local * vec4f(ray.origin, 1.0);
-        let local_direction = instances[j].world_to_local * vec4f(ray.direction, 0.0);
+        let local_direction = mat3(instances[j].world_to_local) * ray.direction;
         let local_ray = Ray(local_origin.xyz, local_direction.xyz, 1.0 / local_direction.xyz);
         let hit_local = intersect_BLAS(local_ray, instance.node);
         hit.n_aabb += hit_local.n_aabb;
@@ -325,23 +314,58 @@ fn intersect_Instances(ray: Ray) -> HitInfo {
     return hit;
 }
 
+/// Sample visible normal distribution function using the algorithm
+/// from "Sampling Visible GGX Normals with Spherical Caps" by Dupuy et al. 2023.
+/// https://cdrdv2-public.intel.com/782052/sampling-visible-ggx-normals.pdf
+fn sample_vndf(rand: vec2f, wi: vec3f, alpha: vec2f) -> vec3f {
+    // warp to the hemisphere configuration
+    let wiStd = normalize(vec3f(wi.xy * alpha, wi.z));
+    // sample a spherical cap in (-wi.z, 1]
+    let phi = TWO_PI * rand.x;
+    let z = fma((1.0 - rand.y), (1.0 + wi.z), -wi.z);
+    let sinTheta = sqrt(clamp(1.0 - z * z, 0.0, 1.0));
+    let x = sinTheta * cos(phi);
+    let y = sinTheta * sin(phi);
+    // compute halfway direction
+    let wmStd = vec3(x, y, z) + wi;
+    // warp back to the ellipsoid configuration
+    let wm = normalize(vec3f(wmStd.xy * alpha, wmStd.z));
+    // return final normal
+    return wm;
+}
+
+fn sample_rendering_eq(dir: Ray) -> vec3f {
+    var throughput = vec3f(1.0);
+    var ray = dir;
+    for (var bounces = 0u; bounces <= MAX_BOUNCES; bounces += 1u) {
+        let hit = intersect_TLAS(ray);
+        if ((hit.flags & EMISSIVE) != 0u) {
+            return throughput * hit.color.xyz;
+        }
+        let wo = ray.direction;
+        let wi = reflect(wo, hit.normal);
+        throughput *= hit.color.xyz;
+        ray = Ray(hit.position, wi, 1.0 / wi);
+    }
+    return vec3f(0.0);
+}
+
 @compute
 @workgroup_size(COMPUTE_SIZE, COMPUTE_SIZE)
 fn main(@builtin(global_invocation_id) id: vec3u) {
     // var color = textureLoad(output, vec2i(id.xy));
     let ray = generate_ray(id);
 
-    let hit = intersect_TLAS(ray);
-    //let hit = intersect_Instances(ray);
-    //let hit = intersect_BLAS(ray, 30903u);
-    //let hit = intersect_BLAS(ray, 0u);
-    
-    let is_hit = (hit.dist != NO_HIT);
-    //textureStore(output, id.xy, vec4f(f32(hit.n_aabb) * 0.02, select(0.0, 1.0, is_hit), f32(hit.n_tri) * 0.2, 1.0));
-    textureStore(output, id.xy, hit.color * GAIN);
-    //textureStore(output, id.xy, vec4f(vec3f(hit.roughness), 1.0));
-    //textureStore(output, id.xy, vec4f(vec3f(hit.metallic), 1.0));
-    //textureStore(output, id.xy, vec4f(hit.normal * 0.5 + 0.5, 1.0));
-    //textureStore(output, id.xy, vec4f(hit.texcoord, 0.0, 1.0));
-    //textureStore(output, id.xy, vec4f(hit.position, 1.0));
+    let color = sample_rendering_eq(ray);
+
+    textureStore(output, id.xy, vec4f(color, 1.0));
+
+    // let hit = intersect_TLAS(ray);
+    // textureStore(output, id.xy, vec4f(f32(hit.n_aabb) * 0.02, select(0.0, 1.0, hit.dist != NO_HIT), f32(hit.n_tri) * 0.2, 1.0));
+    // textureStore(output, id.xy, hit.color * GAIN);
+    // textureStore(output, id.xy, vec4f(vec3f(hit.roughness), 1.0));
+    // textureStore(output, id.xy, vec4f(vec3f(hit.metallic), 1.0));
+    // textureStore(output, id.xy, vec4f(hit.normal * 0.5 + 0.5, 1.0));
+    // textureStore(output, id.xy, vec4f(hit.texcoord, 0.0, 1.0));
+    // textureStore(output, id.xy, vec4f(hit.position, 1.0));
 }

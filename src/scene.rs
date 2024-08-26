@@ -196,6 +196,7 @@ impl Scene {
 #[derive(Clone, Copy, bytemuck::NoUninit)]
 struct Instance {
     world_to_local: Mat4,
+    local_to_world: Mat4,
     color: Vec4,
     roughness: f32,
     metallic: f32,
@@ -214,7 +215,7 @@ impl InstanceWithBounds {
         // Transform all 8 corners of the local bounds to world space and find the new bounds
         let mut world_min = Vec3::splat(f32::INFINITY);
         let mut world_max = Vec3::splat(f32::NEG_INFINITY);
-        let local_to_world = instance.world_to_local.inverse();
+        let local_to_world = instance.local_to_world;
         for i in 0..8u8 {
             let local = Vec3::new(
                 if i & 1 == 0 { local_min.x } else { local_max.x },
@@ -263,6 +264,7 @@ impl SceneBuffers {
             let local_max = blas.nodes()[node as usize].max;
             instances.push(InstanceWithBounds::approximate_from_instance(Instance {
                 world_to_local: primitive.local_to_world.inverse(),
+                local_to_world: primitive.local_to_world,
                 color: primitive.color,
                 roughness: primitive.roughness,
                 metallic: primitive.metallic,
