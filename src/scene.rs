@@ -12,9 +12,10 @@ use crate::common::{Texture, WGPUContext};
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::NoUninit)]
 pub struct Vertex {
-    pub position: Vec4,
-    pub normal: Vec4,
-    pub texcoord: Vec4,
+    pub position: Vec3,
+    pub u: f32,
+    pub normal: Vec3,
+    pub v: f32,
 }
 
 impl Vertex {
@@ -24,19 +25,24 @@ impl Vertex {
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
                 wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x4,
+                    format: wgpu::VertexFormat::Float32x3,
                     offset: mem::offset_of!(Vertex, position) as wgpu::BufferAddress,
                     shader_location: 0,
                 },
                 wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x4,
-                    offset: mem::offset_of!(Vertex, normal) as wgpu::BufferAddress,
+                    format: wgpu::VertexFormat::Float32,
+                    offset: mem::offset_of!(Vertex, u) as wgpu::BufferAddress,
                     shader_location: 1,
                 },
                 wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x4,
-                    offset: mem::offset_of!(Vertex, texcoord) as wgpu::BufferAddress,
+                    format: wgpu::VertexFormat::Float32x3,
+                    offset: mem::offset_of!(Vertex, normal) as wgpu::BufferAddress,
                     shader_location: 2,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32,
+                    offset: mem::offset_of!(Vertex, v) as wgpu::BufferAddress,
+                    shader_location: 3,
                 },
             ],
         }
@@ -141,9 +147,10 @@ impl Scene {
                 let start_vertex = self.vertices.len() as u32;
                 for ((position, normal), texcoord) in positions.zip(normals).zip(texcoords) {
                     self.vertices.push(Vertex {
-                        position: Vec3::from(position).extend(1.0),
-                        normal: Vec3::from(normal).extend(0.0),
-                        texcoord: Vec2::from(texcoord).extend(0.0).extend(0.0),
+                        position: Vec3::from(position),
+                        u: texcoord[0],
+                        normal: Vec3::from(normal),
+                        v: texcoord[1],
                     });
                 }
 
