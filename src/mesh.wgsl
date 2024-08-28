@@ -10,6 +10,7 @@ struct VertexInput {
     @location(1) u: f32,
     @location(2) normal: vec3f,
     @location(3) v: f32,
+    @location(4) tangent: vec4f,
 };
 
 struct VertexOutput {

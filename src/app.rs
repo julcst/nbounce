@@ -15,7 +15,7 @@ pub struct MainApp {
     wgpu: WGPUContext,
     imgui: ImGuiContext,
     window: Arc<Window>,
-    metrics: PerformanceMetrics<120>,
+    metrics: PerformanceMetrics<420>,
 
     depth_texture: Texture,
     scene: SceneBuffers,
@@ -33,6 +33,9 @@ impl App for MainApp {
 
         let mut scene_data = Scene::default();
         scene_data.parse_gltf(Path::new("assets/testscene.glb")).unwrap();
+        let timer = std::time::Instant::now();
+        scene_data.gen_tangents().unwrap();
+        log::info!("Generated tangents in {:?}", timer.elapsed());
         let scene = SceneBuffers::from_scene(&wgpu, &mut scene_data);
 
         let camera = CameraController::new(&wgpu);

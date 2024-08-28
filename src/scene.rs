@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::{mem, ops::Range, path::Path};
 
-use glam::{Mat4, Vec2, Vec3, Vec4};
+use glam::{Mat4, Vec3, Vec4};
+use mikktspace::Geometry;
 use wgpu::util::DeviceExt;
 
 use crate::bvh::{self, BVHPrimitive, BVHTree};
@@ -16,6 +17,7 @@ pub struct Vertex {
     pub u: f32,
     pub normal: Vec3,
     pub v: f32,
+    pub tangent: Vec4,
 }
 
 impl Vertex {
@@ -44,6 +46,11 @@ impl Vertex {
                     offset: mem::offset_of!(Vertex, v) as wgpu::BufferAddress,
                     shader_location: 3,
                 },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x4,
+                    offset: mem::offset_of!(Vertex, tangent) as wgpu::BufferAddress,
+                    shader_location: 4,
+                },
             ],
         }
     }
@@ -67,6 +74,7 @@ pub enum MeshError {
     MissingTexCoords,
     MissingIndices,
     NotTriangleList,
+    FailedTangentGeneration,
 }
 
 impl From<gltf::Error> for MeshError {
@@ -84,6 +92,7 @@ impl std::fmt::Display for MeshError {
             MeshError::MissingTexCoords => write!(f, "Missing texcoords"),
             MeshError::MissingIndices => write!(f, "Missing indices"),
             MeshError::NotTriangleList => write!(f, "Not a triangle list"),
+            MeshError::FailedTangentGeneration => write!(f, "Failed to generate tangents"),
         }
     }
 }
@@ -144,6 +153,7 @@ impl Scene {
                 let normals = reader.read_normals().ok_or(MeshError::MissingNormals)?;
                 let texcoords = reader.read_tex_coords(0).ok_or(MeshError::MissingTexCoords)?.into_f32();
 
+                // TODO: Read tangents if possible
                 let start_vertex = self.vertices.len() as u32;
                 for ((position, normal), texcoord) in positions.zip(normals).zip(texcoords) {
                     self.vertices.push(Vertex {
@@ -151,6 +161,7 @@ impl Scene {
                         u: texcoord[0],
                         normal: Vec3::from(normal),
                         v: texcoord[1],
+                        tangent: Vec4::ZERO,
                     });
                 }
 
@@ -196,6 +207,47 @@ impl Scene {
 
         log::info!("Processed {:?} in {:?}", path, time.elapsed());
         Ok(())
+    }
+
+    pub fn gen_tangents(&mut self) -> Result<(), MeshError> {
+        mikktspace::generate_tangents(self).then_some(()).ok_or(MeshError::FailedTangentGeneration)
+    }
+
+    fn index(&self, face: usize, vertex: usize) -> usize {
+        self.indices[face * 3 + vertex] as usize
+    }
+
+    fn vertex(&self, face: usize, vertex: usize) -> &Vertex {
+        &self.vertices[self.index(face, vertex)]
+    }
+}
+
+impl Geometry for Scene {
+    fn num_faces(&self) -> usize {
+        self.indices.len() / 3
+    }
+
+    fn num_vertices_of_face(&self, _face: usize) -> usize { 3 }
+
+    fn position(&self, face: usize, vertex: usize) -> [f32; 3] {
+        self.vertex(face, vertex).position.into()
+    }
+
+    fn normal(&self, face: usize, vertex: usize) -> [f32; 3] {
+        self.vertex(face, vertex).normal.into()
+    }
+
+    fn tex_coord(&self, face: usize, vertex: usize) -> [f32; 2] {
+        let v = self.vertex(face, vertex);
+        [v.u, v.v]
+    }
+
+    fn set_tangent_encoded(&mut self, tangent: [f32; 4], face: usize, vert: usize) {
+        let i = self.index(face, vert);
+        // if self.vertices[i].tangent != Vec4::ZERO {
+        //     // TODO: This should not happen
+        // }
+        self.vertices[i].tangent = Vec4::from(tangent);
     }
 }
 

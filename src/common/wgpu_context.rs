@@ -37,8 +37,12 @@ impl WGPUContext {
                     label: Some("Device"),
                     required_features:
                         wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES |
-                        wgpu::Features::TEXTURE_COMPRESSION_BC,
-                    required_limits: wgpu::Limits::default(),
+                        wgpu::Features::TEXTURE_COMPRESSION_BC |
+                        wgpu::Features::PUSH_CONSTANTS,
+                    required_limits: wgpu::Limits {
+                        max_push_constant_size: 16,
+                        ..wgpu::Limits::default()
+                    },
                     memory_hints: wgpu::MemoryHints::default(),
                 },
                 None,

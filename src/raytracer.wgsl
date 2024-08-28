@@ -5,9 +5,9 @@ const MAX_FLOAT: f32 = 0x1.fffffep+127f;
 const NO_HIT: f32 = MAX_FLOAT;
 const EPS: f32 = 0.00000001;
 
-const GAIN: f32 = 0.25;
 const STACK_SIZE = 32u;
-const MAX_BOUNCES = 1u;
+const MAX_BOUNCES = 8u;
+const MIN_THROUGHPUT_SQ = 0.1;
 
 @group(0) @binding(0) var output: texture_storage_2d<rgba16float, read_write>;
 
@@ -40,6 +40,7 @@ struct Vertex {
     u: f32,
     normal: vec3f,
     v: f32,
+    tangent: vec4f,
 };
 
 @group(2) @binding(0) var<storage, read> blas: array<BVHNode>;
@@ -49,6 +50,12 @@ struct Vertex {
 @group(2) @binding(4) var<storage, read> indices: array<u32>;
 @group(2) @binding(5) var environment: texture_cube<f32>;
 @group(2) @binding(6) var environment_sampler: sampler;
+
+struct PushConstants {
+    frame: u32,
+};
+
+var<push_constant> c: PushConstants;
 
 struct Ray {
     origin: vec3f,
@@ -82,6 +89,7 @@ fn intersect_triangle(ray: Ray, v0: vec3f, v1: vec3f, v2: vec3f) -> vec3f {
         return vec3f(NO_HIT, NO_HIT, NO_HIT); // Outside
     }
     var t = inv_det * dot(edge2, q);
+    // TODO: Fix near plane for reflections
     if t < 0.01 {
         return vec3f(NO_HIT, NO_HIT, NO_HIT); // Behind
     }
@@ -96,6 +104,7 @@ fn intersect_AABB(ray: Ray, aabb: AABB) -> f32 {
     var t_2 = max(t_min, t_max);
     var t_near = max(t_1.x, max(t_1.y, t_1.z));
     var t_far = min(t_2.x, min(t_2.y, t_2.z));
+    // TODO: Fix near plane for reflections
     return select(NO_HIT, t_near, t_near <= t_far && t_far >= 0.0);
 }
 
@@ -110,12 +119,13 @@ struct HitInfo {
     n_tri: u32,
     roughness: f32,
     color: vec4f,
+    tangent: vec4f,
     metallic: f32,
     flags: u32,
 };
 
 fn no_hit_info() -> HitInfo {
-    return HitInfo(vec3f(0.0), NO_HIT, vec3f(0.0), 0u, vec2f(0.0), 0u, 0.0, vec4f(0.0), 0.0, 0u);
+    return HitInfo(vec3f(0.0), NO_HIT, vec3f(0.0), 0u, vec2f(0.0), 0u, 0.0, vec4f(0.0), vec4f(0.0), 0.0, 0u);
 }
 
 struct StackEntry {
@@ -149,16 +159,17 @@ fn intersect_TLAS(ray: Ray) -> HitInfo {
         if is_leaf { // Leaf node
             for (var j = node.start; j < node.end; j += 1u) {
                 let instance = instances[j];
-                let local_origin = instances[j].world_to_local * vec4f(ray.origin, 1.0);
-                let local_direction = instances[j].world_to_local * vec4f(ray.direction, 0.0);
-                let local_ray = Ray(local_origin.xyz, local_direction.xyz, 1.0 / local_direction.xyz);
+                let local_origin = instance.world_to_local * vec4f(ray.origin, 1.0);
+                let local_direction = mat3(instance.world_to_local) * ray.direction;
+                let local_ray = Ray(local_origin.xyz, local_direction, 1.0 / local_direction);
                 let hit_local = intersect_BLAS(local_ray, instance.node);
                 hit.n_aabb += hit_local.n_aabb;
                 hit.n_tri += hit_local.n_tri;
                 if hit_local.dist < hit.dist {
                     hit.dist = hit_local.dist;
                     hit.position = ray.origin + hit.dist * ray.direction;
-                    hit.normal = normalize(mat3(instances[j].local_to_world) * hit_local.normal);
+                    hit.normal = normalize(mat3(instance.local_to_world) * hit_local.normal);
+                    hit.tangent = vec4f(mat3(instance.local_to_world) * hit_local.tangent.xyz, hit_local.tangent.w);
                     hit.texcoord = hit_local.texcoord;
                     hit.color = instance.color;
                     hit.roughness = instance.roughness;
@@ -230,14 +241,17 @@ fn intersect_BLAS(ray: Ray, index_top: u32) -> HitInfo {
                 let v0 = vertices[indices[j + 0u]];
                 let v1 = vertices[indices[j + 1u]];
                 let v2 = vertices[indices[j + 2u]];
-                let t = intersect_triangle(ray, v0.position.xyz, v1.position.xyz, v2.position.xyz);
+                let t = intersect_triangle(ray, v0.position, v1.position, v2.position);
                 hit.n_tri += 1u;
                 if t.x < hit.dist {
                     hit.dist = t.x;
                     let barycentrics = vec3f(1.0 - t.y - t.z, t.yz);
                     hit.position = ray.origin + hit.dist * ray.direction;
-                    hit.normal = normalize(mat3x3f(v0.normal.xyz, v1.normal.xyz, v2.normal.xyz) * barycentrics);
-                    hit.texcoord = mat3x2f(vec2f(v0.u, v0.v), vec2f(v1.u, v1.v), vec2f(v2.u, v2.v)) * barycentrics;
+                    hit.normal = normalize(mat3x3f(v0.normal, v1.normal, v2.normal) * barycentrics);
+                    // TODO: Benchmark?
+                    // hit.texcoord = barycentrics * mat2x3f(vec3f(v0.u, v1.u, v2.u), vec3f(v0.v, v1.v, v2.v)); // 16.7 44.7
+                    hit.texcoord = mat3x2f(vec2f(v0.u, v0.v), vec2f(v1.u, v1.v), vec2f(v2.u, v2.v)) * barycentrics; // 16.4 44.3
+                    hit.tangent = mat3x4f(v0.tangent, v1.tangent, v2.tangent) * barycentrics;
                 }
             }
         } else {
@@ -299,8 +313,8 @@ fn intersect_instances(ray: Ray) -> HitInfo {
     var hit = no_hit_info();
     for (var j = 0u; j < arrayLength(&instances); j += 1u) {
         let instance = instances[j];
-        let local_origin = instances[j].world_to_local * vec4f(ray.origin, 1.0);
-        let local_direction = mat3(instances[j].world_to_local) * ray.direction;
+        let local_origin = instance.world_to_local * vec4f(ray.origin, 1.0);
+        let local_direction = mat3(instance.world_to_local) * ray.direction;
         let local_ray = Ray(local_origin.xyz, local_direction.xyz, 1.0 / local_direction.xyz);
         let hit_local = intersect_BLAS(local_ray, instance.node);
         hit.n_aabb += hit_local.n_aabb;
@@ -335,7 +349,32 @@ fn sample_vndf(rand: vec2f, wi: vec3f, alpha: vec2f) -> vec3f {
     return wm;
 }
 
-fn sample_rendering_eq(dir: Ray) -> vec3f {
+fn hash2u(s: vec2u) -> vec2u {
+    var v = s * 1664525u + 1013904223u;
+    v.x += v.y * 1664525u; v.y += v.x * 1664525u;
+    v ^= v >> vec2u(16u);
+    v.x += v.y * 1664525u; v.y += v.x * 1664525u;
+    v ^= v >> vec2u(16u);
+    return v;
+}
+
+fn hash2f(s: vec2u) -> vec2f {
+    return vec2f(hash2u(s)) * (1.0 / f32(0xffffffffu));
+}
+
+fn hash3u(s: vec3u) -> vec3u {
+    var v = s * 1664525u + 1013904223u;
+    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+    v ^= v >> vec3u(16u);
+    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+    return v;
+}
+
+fn hash3f(s: vec3u) -> vec3f {
+    return vec3f(hash3u(s)) * (1.0 / f32(0xffffffffu));
+}
+
+fn sample_rendering_eq(seed: vec3u, dir: Ray) -> vec3f {
     var throughput = vec3f(1.0);
     var ray = dir;
     for (var bounces = 0u; bounces <= MAX_BOUNCES; bounces += 1u) {
@@ -343,10 +382,20 @@ fn sample_rendering_eq(dir: Ray) -> vec3f {
         if ((hit.flags & EMISSIVE) != 0u) {
             return throughput * hit.color.xyz;
         }
-        let wo = ray.direction;
-        let wi = reflect(wo, hit.normal);
+        let t = hit.tangent.xyz;
+        let b = hit.tangent.w * cross(hit.tangent.xyz, hit.normal);
+        let n = hit.normal;
+        let tbn = mat3x3f(t, b, n);
+        let wo = normalize(ray.direction * tbn);
+        let alpha = hit.roughness * hit.roughness;
+        let wn = sample_vndf(hash3f(seed).xy, -wo, vec2f(alpha));
+        let wi = reflect(wo, wn);
         throughput *= hit.color.xyz;
-        ray = Ray(hit.position, wi, 1.0 / wi);
+        if (dot(throughput, throughput) <= MIN_THROUGHPUT_SQ) {
+            return vec3f(0.0);
+        }
+        let world_wi = normalize(tbn * wi);
+        ray = Ray(hit.position, world_wi, 1.0 / world_wi);
     }
     return vec3f(0.0);
 }
@@ -354,18 +403,21 @@ fn sample_rendering_eq(dir: Ray) -> vec3f {
 @compute
 @workgroup_size(COMPUTE_SIZE, COMPUTE_SIZE)
 fn main(@builtin(global_invocation_id) id: vec3u) {
-    // var color = textureLoad(output, vec2i(id.xy));
+    var color = textureLoad(output, vec2i(id.xy));
     let ray = generate_ray(id);
 
-    let color = sample_rendering_eq(ray);
+    color = 0.95 * color + 0.05 * vec4f(sample_rendering_eq(vec3u(id.xy, id.z + c.frame), ray), 1.0);
 
-    textureStore(output, id.xy, vec4f(color, 1.0));
+    textureStore(output, id.xy, color);
 
     // let hit = intersect_TLAS(ray);
+    // textureStore(output, id.xy, vec4f(hash2f(id.xy), 0.0, 1.0));
     // textureStore(output, id.xy, vec4f(f32(hit.n_aabb) * 0.02, select(0.0, 1.0, hit.dist != NO_HIT), f32(hit.n_tri) * 0.2, 1.0));
-    // textureStore(output, id.xy, hit.color * GAIN);
+    // textureStore(output, id.xy, hit.color);
     // textureStore(output, id.xy, vec4f(vec3f(hit.roughness), 1.0));
     // textureStore(output, id.xy, vec4f(vec3f(hit.metallic), 1.0));
+    // textureStore(output, id.xy, vec4f(hit.tangent.xyz * 0.5 + 0.5, 1.0));
+    // textureStore(output, id.xy, vec4f(vec3f(hit.tangent.w) * 0.5 + 0.5, 1.0));
     // textureStore(output, id.xy, vec4f(hit.normal * 0.5 + 0.5, 1.0));
     // textureStore(output, id.xy, vec4f(hit.texcoord, 0.0, 1.0));
     // textureStore(output, id.xy, vec4f(hit.position, 1.0));

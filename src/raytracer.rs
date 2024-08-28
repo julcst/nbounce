@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use glam::{uvec2, Vec3Swizzles};
+use wgpu::PushConstantRange;
 
 use crate::common::{CameraController, Texture, WGPUContext};
 use crate::scene::SceneBuffers;
@@ -9,10 +10,18 @@ pub struct Raytracer {
     pipeline: wgpu::ComputePipeline,
     output_group: wgpu::BindGroup,
     output: Texture,
+    push_constants: PushConstants,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::NoUninit)]
+struct PushConstants {
+    frame: u32,
+    padding: [u32; 3],
 }
 
 impl Raytracer {
-    const RESOLUTION_FACTOR: f32 = 0.75;
+    const RESOLUTION_FACTOR: f32 = 0.5;
     const COMPUTE_SIZE: u32 = 8;
 
     pub fn new(wgpu: &WGPUContext, scene: &SceneBuffers, camera: &CameraController) -> Self {
@@ -50,7 +59,10 @@ impl Raytracer {
         let layout = wgpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Raytracer Pipeline Layout"),
             bind_group_layouts: &[&output_layout, camera.layout(), scene.layout()],
-            push_constant_ranges: &[],
+            push_constant_ranges: &[PushConstantRange {
+                stages: wgpu::ShaderStages::COMPUTE,
+                range: 0..std::mem::size_of::<PushConstants>() as u32,
+            }],
         });
 
         let pipeline = wgpu.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -68,7 +80,7 @@ impl Raytracer {
             cache: None,
         });
 
-        Self { pipeline, output_group, output }
+        Self { pipeline, output_group, output, push_constants: PushConstants::default() }
     }
 
     fn create_output_texture(wgpu: &WGPUContext) -> Texture {
@@ -102,7 +114,7 @@ impl Raytracer {
         });
     }
 
-    pub fn dispatch(&self, encoder: &mut wgpu::CommandEncoder, scene: &SceneBuffers, camera: &CameraController) {
+    pub fn dispatch(&mut self, encoder: &mut wgpu::CommandEncoder, scene: &SceneBuffers, camera: &CameraController) {
         let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("Raytracer Compute Pass"),
             timestamp_writes: None,
@@ -111,6 +123,8 @@ impl Raytracer {
         cpass.set_bind_group(0, &self.output_group, &[]);
         cpass.set_bind_group(1, camera.bind_group(), &[]);
         cpass.set_bind_group(2, scene.bind_group(), &[]);
+        cpass.set_push_constants(0, bytemuck::cast_slice(&[self.push_constants]));
+        self.push_constants.frame += 1;
         let n_workgroups = self.output.size().xy() / Self::COMPUTE_SIZE;
         cpass.dispatch_workgroups(n_workgroups.x, n_workgroups.y, 1);
     }

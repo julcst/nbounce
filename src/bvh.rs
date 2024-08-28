@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use glam::{UVec3, Vec3, Vec4Swizzles};
+use glam::{UVec3, Vec3};
 
 use crate::scene::Vertex;
 
