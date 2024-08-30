@@ -122,6 +122,7 @@ impl CameraController {
     pub fn window_event(&mut self, event: &winit::event::WindowEvent) {
         match event {
             winit::event::WindowEvent::PinchGesture { delta, .. } => {
+                // FIXME: Sometimes the pinch gesture is not detected
                 self.zoom(*delta as f32 * 10.0);
             },
             winit::event::WindowEvent::Resized(size) => {

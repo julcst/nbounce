@@ -4,8 +4,9 @@ const TWO_PI: f32 = 2.0 * PI;
 const MAX_FLOAT: f32 = 0x1.fffffep+127f;
 const NO_HIT: f32 = MAX_FLOAT;
 const EPS: f32 = 0.00000001;
-
 const STACK_SIZE = 32u;
+
+// TODO: Move to uniforms
 const MAX_BOUNCES = 8u;
 const MIN_THROUGHPUT_SQ = 0.1;
 
@@ -53,6 +54,7 @@ struct Vertex {
 
 struct PushConstants {
     frame: u32,
+    weight: f32,
 };
 
 var<push_constant> c: PushConstants;
@@ -74,8 +76,9 @@ fn intersect_triangle(ray: Ray, v0: vec3f, v1: vec3f, v2: vec3f) -> vec3f {
     let edge2 = v2 - v0;
     let h = cross(ray.direction, edge2);
     let det = dot(edge1, h);
-    if det > -EPS && det < EPS { // Backface culling: det < EPS
-        return vec3f(NO_HIT, NO_HIT, NO_HIT); // Parallel
+    // TODO: Do det > -EPS for inner refraction rays
+    if det < EPS { // Backface culling: det < EPS
+        return vec3f(NO_HIT, NO_HIT, NO_HIT); // Parallel or culled
     }
     var inv_det = 1 / det;
     var s = ray.origin - v0;
@@ -90,7 +93,7 @@ fn intersect_triangle(ray: Ray, v0: vec3f, v1: vec3f, v2: vec3f) -> vec3f {
     }
     var t = inv_det * dot(edge2, q);
     // TODO: Fix near plane for reflections
-    if t < 0.01 {
+    if t < 0.0 {
         return vec3f(NO_HIT, NO_HIT, NO_HIT); // Behind
     }
     return vec3f(t, u, v);
@@ -104,7 +107,6 @@ fn intersect_AABB(ray: Ray, aabb: AABB) -> f32 {
     var t_2 = max(t_min, t_max);
     var t_near = max(t_1.x, max(t_1.y, t_1.z));
     var t_far = min(t_2.x, min(t_2.y, t_2.z));
-    // TODO: Fix near plane for reflections
     return select(NO_HIT, t_near, t_near <= t_far && t_far >= 0.0);
 }
 
@@ -133,6 +135,8 @@ struct StackEntry {
     dist: f32,
 };
 
+// TODO: Implement HW raytracing
+// TODO: Refactor in sperate file
 fn intersect_TLAS(ray: Ray) -> HitInfo {
     var stack: array<StackEntry, STACK_SIZE>;
 
@@ -208,6 +212,7 @@ fn intersect_TLAS(ray: Ray) -> HitInfo {
         }
     }
     if hit.dist == NO_HIT {
+        // TODO: Use pre-filtered mipmaps
         hit.color = textureSampleLevel(environment, environment_sampler, ray.direction, 0.0);
         hit.flags |= EMISSIVE;
     }
@@ -289,9 +294,9 @@ fn intersect_BLAS(ray: Ray, index_top: u32) -> HitInfo {
 }
 
 // TODO: Match with rasterization
-fn generate_ray(id: vec3u) -> Ray {
+fn generate_ray(id: vec3u, rand: vec2f) -> Ray {
     let dim = vec2f(textureDimensions(output));
-    let uv = 2.0 * vec2f(id.xy) / dim - 1.0;
+    let uv = 2.0 * (vec2f(id.xy) + rand) / dim - 1.0;
 
     // let clip_pos = vec4f(0.0, 0.0, 0.0, 1.0);
     // let world_pos = camera.clip_to_world * clip_pos;
@@ -337,14 +342,42 @@ fn sample_vndf(rand: vec2f, wi: vec3f, alpha: vec2f) -> vec3f {
     let wiStd = normalize(vec3f(wi.xy * alpha, wi.z));
     // sample a spherical cap in (-wi.z, 1]
     let phi = TWO_PI * rand.x;
-    let z = fma((1.0 - rand.y), (1.0 + wi.z), -wi.z);
+    let z = fma((1.0 - rand.y), (1.0 + wiStd.z), -wiStd.z);
     let sinTheta = sqrt(clamp(1.0 - z * z, 0.0, 1.0));
     let x = sinTheta * cos(phi);
     let y = sinTheta * sin(phi);
-    // compute halfway direction
-    let wmStd = vec3(x, y, z) + wi;
+    // compute halfway direction as standard normal
+    let wmStd = vec3(x, y, z) + wiStd;
     // warp back to the ellipsoid configuration
     let wm = normalize(vec3f(wmStd.xy * alpha, wmStd.z));
+    // return final normal
+    return wm;
+}
+
+fn sample_vndf_iso(rand: vec2f, wi: vec3f, alpha: f32, n: vec3f) -> vec3f {
+    // decompose the vector in parallel and perpendicular components
+    let wi_z = n * dot(wi, n);
+    let wi_xy = wi - wi_z;
+    // warp to the hemisphere configuration
+    let wiStd = normalize(wi_z - alpha * wi_xy);
+    // sample a spherical cap in (-wiStd.z, 1]
+    let wiStd_z = dot(wiStd, n);
+    let phi = (2.0 * rand.x - 1.0) * PI;
+    let z = (1.0 - rand.y) * (1.0 + wiStd_z) - wiStd_z;
+    let sinTheta = sqrt(clamp(1.0 - z * z, 0.0, 1.0));
+    let x = sinTheta * cos(phi);
+    let y = sinTheta * sin(phi);
+    let cStd = vec3(x, y, z);
+    // reflect sample to align with normal
+    let up = vec3f(0, 0, 1);
+    let wr = n + up;
+    let c = dot(wr, cStd) * wr / wr.z - cStd;
+    // compute halfway direction as standard normal
+    let wmStd = c + wiStd;
+    let wmStd_z = n * dot(n, wmStd);
+    let wmStd_xy = wmStd_z - wmStd;
+    // warp back to the ellipsoid configuration
+    let wm = normalize(wmStd_z + alpha * wmStd_xy);
     // return final normal
     return wm;
 }
@@ -374,7 +407,7 @@ fn hash3f(s: vec3u) -> vec3f {
     return vec3f(hash3u(s)) * (1.0 / f32(0xffffffffu));
 }
 
-fn sample_rendering_eq(seed: vec3u, dir: Ray) -> vec3f {
+fn sample_rendering_eq(rand: vec2f, dir: Ray) -> vec3f {
     var throughput = vec3f(1.0);
     var ray = dir;
     for (var bounces = 0u; bounces <= MAX_BOUNCES; bounces += 1u) {
@@ -382,13 +415,14 @@ fn sample_rendering_eq(seed: vec3u, dir: Ray) -> vec3f {
         if ((hit.flags & EMISSIVE) != 0u) {
             return throughput * hit.color.xyz;
         }
+        // TODO: Multiple Importance Sampling?
         let t = hit.tangent.xyz;
         let b = hit.tangent.w * cross(hit.tangent.xyz, hit.normal);
         let n = hit.normal;
         let tbn = mat3x3f(t, b, n);
         let wo = normalize(ray.direction * tbn);
         let alpha = hit.roughness * hit.roughness;
-        let wn = sample_vndf(hash3f(seed).xy, -wo, vec2f(alpha));
+        let wn = sample_vndf(rand, -wo, vec2f(alpha));
         let wi = reflect(wo, wn);
         throughput *= hit.color.xyz;
         if (dot(throughput, throughput) <= MIN_THROUGHPUT_SQ) {
@@ -404,9 +438,11 @@ fn sample_rendering_eq(seed: vec3u, dir: Ray) -> vec3f {
 @workgroup_size(COMPUTE_SIZE, COMPUTE_SIZE)
 fn main(@builtin(global_invocation_id) id: vec3u) {
     var color = textureLoad(output, vec2i(id.xy));
-    let ray = generate_ray(id);
+    let rand = hash3f(vec3u(id.xy, id.z + c.frame));
 
-    color = 0.95 * color + 0.05 * vec4f(sample_rendering_eq(vec3u(id.xy, id.z + c.frame), ray), 1.0);
+    let ray = generate_ray(id, rand.xy);
+
+    color = mix(color, vec4f(sample_rendering_eq(rand.yz, ray), 1.0), c.weight);
 
     textureStore(output, id.xy, color);
 

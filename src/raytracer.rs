@@ -11,17 +11,19 @@ pub struct Raytracer {
     output_group: wgpu::BindGroup,
     output: Texture,
     push_constants: PushConstants,
+    sample_count: f32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::NoUninit)]
 struct PushConstants {
     frame: u32,
-    padding: [u32; 3],
+    weight: f32,
+    padding: [u32; 2],
 }
 
 impl Raytracer {
-    const RESOLUTION_FACTOR: f32 = 0.5;
+    const RESOLUTION_FACTOR: f32 = 0.3;
     const COMPUTE_SIZE: u32 = 8;
 
     pub fn new(wgpu: &WGPUContext, scene: &SceneBuffers, camera: &CameraController) -> Self {
@@ -80,7 +82,7 @@ impl Raytracer {
             cache: None,
         });
 
-        Self { pipeline, output_group, output, push_constants: PushConstants::default() }
+        Self { pipeline, output_group, output, push_constants: PushConstants::default(), sample_count: 0.0 }
     }
 
     fn create_output_texture(wgpu: &WGPUContext) -> Texture {
@@ -114,6 +116,14 @@ impl Raytracer {
         });
     }
 
+    pub fn sample_count(&self) -> u32 {
+        self.sample_count as u32
+    }
+
+    pub fn invalidate(&mut self) {
+        self.sample_count = 0.0;
+    }
+
     pub fn dispatch(&mut self, encoder: &mut wgpu::CommandEncoder, scene: &SceneBuffers, camera: &CameraController) {
         let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("Raytracer Compute Pass"),
@@ -123,8 +133,10 @@ impl Raytracer {
         cpass.set_bind_group(0, &self.output_group, &[]);
         cpass.set_bind_group(1, camera.bind_group(), &[]);
         cpass.set_bind_group(2, scene.bind_group(), &[]);
-        cpass.set_push_constants(0, bytemuck::cast_slice(&[self.push_constants]));
         self.push_constants.frame += 1;
+        self.sample_count += 1.0;
+        self.push_constants.weight = 1.0 / self.sample_count;
+        cpass.set_push_constants(0, bytemuck::cast_slice(&[self.push_constants]));
         let n_workgroups = self.output.size().xy() / Self::COMPUTE_SIZE;
         cpass.dispatch_workgroups(n_workgroups.x, n_workgroups.y, 1);
     }

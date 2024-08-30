@@ -95,9 +95,18 @@ impl App for MainApp {
                     self.metrics.curr_frame_rate(),
                     self.window.inner_size().width,
                     self.window.inner_size().height));
-            });
+        });
 
-        self.camera.update(&self.wgpu);
+        ui.window("Settings")
+            .size([1.0, 1.0], imgui::Condition::FirstUseEver)
+            .always_auto_resize(true)
+            .build(|| {
+                ui.text(format!("Samples {}", self.raytracer.sample_count()));
+        });
+
+        if self.camera.update(&self.wgpu) {
+            self.raytracer.invalidate();
+        }
     }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
