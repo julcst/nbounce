@@ -35,6 +35,5 @@ fn vs_main(
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4f {
-    let color = textureSample(t, s, in.texcoord);
-    return vec4f(color.xyz / color.w, 1.0);
+    return textureSample(t, s, in.texcoord);
 }

@@ -19,7 +19,7 @@ pub struct Raytracer {
 struct PushConstants {
     frame: u32,
     sample_count: f32,
-    padding: [u32; 2],
+    weight: f32,
 }
 
 impl Raytracer {
@@ -136,6 +136,7 @@ impl Raytracer {
         self.push_constants.frame += 1;
         self.sample_count += 1.0;
         self.push_constants.sample_count = self.sample_count;
+        self.push_constants.weight = 1.0 / self.sample_count;
         cpass.set_push_constants(0, bytemuck::cast_slice(&[self.push_constants]));
         let n_workgroups = self.output.size().xy() / Self::COMPUTE_SIZE;
         cpass.dispatch_workgroups(n_workgroups.x, n_workgroups.y, 1);

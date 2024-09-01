@@ -55,6 +55,7 @@ struct Vertex {
 struct PushConstants {
     frame: u32,
     sample_count: f32,
+    weight: f32,
 };
 
 var<push_constant> c: PushConstants;
@@ -493,7 +494,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 
     // FIXME: Why does this progressively get darker, floating point errors?
     let sample = sample_rendering_eq(rand.zw, ray);
-    color = vec4f(color.xyz + sample, c.sample_count);
+    color = vec4f(mix(color.xyz, sample, c.weight), 1.0);
 
     textureStore(output, id.xy, color);
 
