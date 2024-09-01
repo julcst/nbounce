@@ -8,9 +8,9 @@ const STACK_SIZE = 32u;
 
 // TODO: Move to uniforms
 const MAX_BOUNCES = 8u;
-const MIN_THROUGHPUT_SQ = 0.1;
+const MIN_THROUGHPUT_SQ = 0.0001;
 
-@group(0) @binding(0) var output: texture_storage_2d<rgba16float, read_write>;
+@group(0) @binding(0) var output: texture_storage_2d<rgba32float, read_write>;
 
 struct CameraData {
     world_to_clip: mat4x4f,
@@ -54,7 +54,7 @@ struct Vertex {
 
 struct PushConstants {
     frame: u32,
-    weight: f32,
+    sample_count: f32,
 };
 
 var<push_constant> c: PushConstants;
@@ -370,7 +370,8 @@ fn sample_vndf_iso(rand: vec2f, wi: vec3f, alpha: f32, n: vec3f) -> vec3f {
     let cStd = vec3(x, y, z);
     // reflect sample to align with normal
     let up = vec3f(0, 0, 1);
-    let wr = n + up;
+    var wr = n + up;
+    if wr.z == 0.0 { wr.z = 0.0000001; } // TODO: Find better solution
     let c = dot(wr, cStd) * wr / wr.z - cStd;
     // compute halfway direction as standard normal
     let wmStd = c + wiStd;
@@ -382,29 +383,61 @@ fn sample_vndf_iso(rand: vec2f, wi: vec3f, alpha: f32, n: vec3f) -> vec3f {
     return wm;
 }
 
-fn hash2u(s: vec2u) -> vec2u {
+fn sample_uniform(rand: vec2f) -> vec3f {
+    return vec3f(0.0); // TODO
+}
+
+fn hash4u(s: vec4u) -> vec4u {
     var v = s * 1664525u + 1013904223u;
-    v.x += v.y * 1664525u; v.y += v.x * 1664525u;
-    v ^= v >> vec2u(16u);
-    v.x += v.y * 1664525u; v.y += v.x * 1664525u;
-    v ^= v >> vec2u(16u);
+    v.x += v.y * v.w; v.y += v.z * v.x; v.z += v.x * v.y; v.w += v.y * v.z;
+    v ^= v >> vec4u(16u);
+    v.x += v.y * v.w; v.y += v.z * v.x; v.z += v.x * v.y; v.w += v.y * v.z;
     return v;
 }
 
-fn hash2f(s: vec2u) -> vec2f {
-    return vec2f(hash2u(s)) * (1.0 / f32(0xffffffffu));
+fn hash4f(s: vec4u) -> vec4f {
+    return vec4f(hash4u(s)) * (1.0 / f32(0xffffffffu));
 }
 
-fn hash3u(s: vec3u) -> vec3u {
-    var v = s * 1664525u + 1013904223u;
-    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
-    v ^= v >> vec3u(16u);
-    v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
-    return v;
+/**
+ * Schlick's approximation for the Fresnel term (see https://en.wikipedia.org/wiki/Schlick%27s_approximation).
+ * The Fresnel term describes how light is reflected at the surface.
+ * For conductors the reflection coefficient R0 is chromatic, for dielectrics it is achromatic.
+ * R0 = ((n1 - n2) / (n1 + n2))^2 with n1, n2 being the refractive indices of the two materials.
+ * We can set n1 = 1.0 (air) and n2 = IoR of the material.
+ * Most dielectrics have an IoR near 1.5 => R0 = ((1 - 1.5) / (1 + 1.5))^2 = 0.04.
+ */
+fn F_SchlickApprox(HdotV: f32, R0: vec3f) -> vec3f {
+    return R0 + (1.0 - R0) * pow(1.0 - HdotV, 5.0);
 }
 
-fn hash3f(s: vec3u) -> vec3f {
-    return vec3f(hash3u(s)) * (1.0 / f32(0xffffffffu));
+/**
+ * Lambda for the Trowbridge-Reitz NDF
+ * Measures invisible masked microfacet area per visible microfacet area.
+ */
+fn Lambda_TrowbridgeReitz(NdotV: f32, alpha2: f32) -> f32 {
+    let cosTheta = NdotV;
+    let cos2Theta = cosTheta * cosTheta;
+    let sin2Theta = 1.0 - cos2Theta;
+    let tan2Theta = sin2Theta / cos2Theta;
+    return (-1.0 + sqrt(1.0 + alpha2 * tan2Theta)) / 2.0;
+}
+
+/**
+ * Smith's shadowing-masking function for the Trowbridge-Reitz NDF.
+ */
+fn G2_TrowbridgeReitz(NdotL: f32, NdotV: f32, alpha2: f32) -> f32 {
+    let lambdaL = Lambda_TrowbridgeReitz(NdotL, alpha2);
+    let lambdaV = Lambda_TrowbridgeReitz(NdotV, alpha2);
+    return 1.0 / (1.0 + lambdaL + lambdaV);
+}
+
+/**
+ * Smith's shadowing-masking function for the Trowbridge-Reitz NDF.
+ */
+fn G1_TrowbridgeReitz(NdotV: f32, alpha2: f32) -> f32 {
+    let lambdaV = Lambda_TrowbridgeReitz(NdotV, alpha2);
+    return 1.0 / (1.0 + lambdaV);
 }
 
 fn sample_rendering_eq(rand: vec2f, dir: Ray) -> vec3f {
@@ -412,24 +445,36 @@ fn sample_rendering_eq(rand: vec2f, dir: Ray) -> vec3f {
     var ray = dir;
     for (var bounces = 0u; bounces <= MAX_BOUNCES; bounces += 1u) {
         let hit = intersect_TLAS(ray);
-        if ((hit.flags & EMISSIVE) != 0u) {
+        if (hit.flags & EMISSIVE) != 0u {
             return throughput * hit.color.xyz;
         }
         // TODO: Multiple Importance Sampling?
-        let t = hit.tangent.xyz;
-        let b = hit.tangent.w * cross(hit.tangent.xyz, hit.normal);
-        let n = hit.normal;
-        let tbn = mat3x3f(t, b, n);
-        let wo = normalize(ray.direction * tbn);
         let alpha = hit.roughness * hit.roughness;
-        let wn = sample_vndf(rand, -wo, vec2f(alpha));
-        let wi = reflect(wo, wn);
-        throughput *= hit.color.xyz;
-        if (dot(throughput, throughput) <= MIN_THROUGHPUT_SQ) {
-            return vec3f(0.0);
-        }
-        let world_wi = normalize(tbn * wi);
-        ray = Ray(hit.position, world_wi, 1.0 / world_wi);
+        let alpha2 = alpha * alpha;
+        let wo = normalize(-ray.direction);
+        let wn = sample_vndf_iso(rand, wo, alpha, hit.normal);
+        let wi = reflect(-wo, wn);
+        let NdotL = dot(wi, hit.normal);
+        let NdotV = dot(wo, hit.normal);
+        let F = F_SchlickApprox(dot(wi, wn), hit.color.xyz);
+        let LambdaL = Lambda_TrowbridgeReitz(NdotL, alpha2);
+        let LambdaV = Lambda_TrowbridgeReitz(NdotV, alpha2);
+        let specular = F * (1.0 + LambdaV) / (1.0 + LambdaL + LambdaV); // = F * (G2 / G1)
+        throughput *= specular;
+        if dot(throughput, throughput) <= MIN_THROUGHPUT_SQ { break; }
+        ray = Ray(hit.position, wi, 1.0 / wi);
+        // let t = hit.tangent.xyz;
+        // let b = hit.tangent.w * cross(hit.tangent.xyz, hit.normal);
+        // let n = hit.normal;
+        // let tbn = mat3x3f(t, b, n);
+        // let wo = normalize(ray.direction * tbn);
+        // let alpha = hit.roughness * hit.roughness;
+        // let wn = sample_vndf(rand, -wo, vec2f(alpha));
+        // let wi = reflect(wo, wn);
+        // throughput *= hit.color.xyz;
+        // if dot(throughput, throughput) <= MIN_THROUGHPUT_SQ { break; }
+        // let world_wi = normalize(tbn * wi);
+        // ray = Ray(hit.position, world_wi, 1.0 / world_wi);
     }
     return vec3f(0.0);
 }
@@ -437,12 +482,18 @@ fn sample_rendering_eq(rand: vec2f, dir: Ray) -> vec3f {
 @compute
 @workgroup_size(COMPUTE_SIZE, COMPUTE_SIZE)
 fn main(@builtin(global_invocation_id) id: vec3u) {
-    var color = textureLoad(output, vec2i(id.xy));
-    let rand = hash3f(vec3u(id.xy, id.z + c.frame));
+    var color = vec4f(0.0);
+    if c.sample_count > 1 {
+        color = textureLoad(output, vec2i(id.xy));
+    }
+
+    let rand = hash4f(vec4u(id.xyz, c.frame));
 
     let ray = generate_ray(id, rand.xy);
 
-    color = mix(color, vec4f(sample_rendering_eq(rand.yz, ray), 1.0), c.weight);
+    // FIXME: Why does this progressively get darker, floating point errors?
+    let sample = sample_rendering_eq(rand.zw, ray);
+    color = vec4f(color.xyz + sample, c.sample_count);
 
     textureStore(output, id.xy, color);
 

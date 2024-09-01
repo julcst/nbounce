@@ -375,8 +375,8 @@ impl SceneBuffers {
         );
 
         // TODO: Get skyboxes from git repo
-        // let skybox = Texture::create_cubemap(wgpu, include_bytes!("../assets/kloppenheim_06.dds"));
-        let skybox = Texture::create_cubemap(wgpu, include_bytes!("../assets/autumn_field.dds"));
+        let skybox = Texture::create_cubemap(wgpu, include_bytes!("../assets/kloppenheim_06.dds"));
+        // let skybox = Texture::create_cubemap(wgpu, include_bytes!("../assets/autumn_field.dds"));
 
         let layout = wgpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("BVH Bind Group Layout"),

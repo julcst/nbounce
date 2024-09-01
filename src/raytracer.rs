@@ -18,7 +18,7 @@ pub struct Raytracer {
 #[derive(Clone, Copy, Debug, Default, bytemuck::NoUninit)]
 struct PushConstants {
     frame: u32,
-    weight: f32,
+    sample_count: f32,
     padding: [u32; 2],
 }
 
@@ -39,7 +39,7 @@ impl Raytracer {
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::StorageTexture { 
                         access: wgpu::StorageTextureAccess::ReadWrite,
-                        format: wgpu::TextureFormat::Rgba16Float,
+                        format: wgpu::TextureFormat::Rgba32Float,
                         view_dimension: wgpu::TextureViewDimension::D2,
                     },
                     count: None,
@@ -94,7 +94,7 @@ impl Raytracer {
             height: dim.y,
             depth_or_array_layers: 1,
         };
-        Texture::create_texture(wgpu, size, wgpu::TextureFormat::Rgba16Float)
+        Texture::create_texture(wgpu, size, wgpu::TextureFormat::Rgba32Float)
     }
 
     pub fn output_texture(&self) -> &Texture {
@@ -135,7 +135,7 @@ impl Raytracer {
         cpass.set_bind_group(2, scene.bind_group(), &[]);
         self.push_constants.frame += 1;
         self.sample_count += 1.0;
-        self.push_constants.weight = 1.0 / self.sample_count;
+        self.push_constants.sample_count = self.sample_count;
         cpass.set_push_constants(0, bytemuck::cast_slice(&[self.push_constants]));
         let n_workgroups = self.output.size().xy() / Self::COMPUTE_SIZE;
         cpass.dispatch_workgroups(n_workgroups.x, n_workgroups.y, 1);

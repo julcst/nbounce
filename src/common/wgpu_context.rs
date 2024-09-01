@@ -36,6 +36,7 @@ impl WGPUContext {
                 &wgpu::DeviceDescriptor {
                     label: Some("Device"),
                     required_features:
+                        wgpu::Features::FLOAT32_FILTERABLE |
                         wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES |
                         wgpu::Features::TEXTURE_COMPRESSION_BC |
                         wgpu::Features::PUSH_CONSTANTS,
