@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::{mem, ops::Range, path::Path};
 
 use glam::{Mat4, Vec3, Vec4};
-use mikktspace::Geometry;
 use wgpu::util::DeviceExt;
 
 use crate::bvh::{self, BVHPrimitive, BVHTree};
@@ -74,7 +73,6 @@ pub enum MeshError {
     MissingTexCoords,
     MissingIndices,
     NotTriangleList,
-    FailedTangentGeneration,
 }
 
 impl From<gltf::Error> for MeshError {
@@ -92,7 +90,6 @@ impl std::fmt::Display for MeshError {
             MeshError::MissingTexCoords => write!(f, "Missing texcoords"),
             MeshError::MissingIndices => write!(f, "Missing indices"),
             MeshError::NotTriangleList => write!(f, "Not a triangle list"),
-            MeshError::FailedTangentGeneration => write!(f, "Failed to generate tangents"),
         }
     }
 }
@@ -154,6 +151,7 @@ impl Scene {
                 let texcoords = reader.read_tex_coords(0).ok_or(MeshError::MissingTexCoords)?.into_f32();
 
                 let start_vertex = self.vertices.len() as u32;
+                let start_index = self.indices.len() as u32;
 
                 if let Some(tangents) = reader.read_tangents() {
                     for (((position, normal), texcoord), tangent) in positions.zip(normals).zip(texcoords).zip(tangents) {
@@ -165,14 +163,13 @@ impl Scene {
                             tangent: Vec4::from(tangent),
                         });
                     }
+
+                    let indices = reader.read_indices().ok_or(MeshError::MissingIndices)?.into_u32();
+                    self.indices.extend(indices.map(|i| i + start_vertex));
                 } else {
                     // TODO: Generate tangents using mikktspace
-                    unimplemented!();
+                    unimplemented!("Tangent generation not yet supported");
                 }
-
-                let start_index = self.indices.len() as u32;
-                let gltf_indices = reader.read_indices().ok_or(MeshError::MissingIndices)?.into_u32();
-                self.indices.extend(gltf_indices.map(|i| i + start_vertex));
 
                 geometry_map.insert((mesh.index(), primitive.index()) , start_index..self.indices.len() as u32);
             }
@@ -213,48 +210,7 @@ impl Scene {
         log::info!("Processed {:?} in {:?}", path, time.elapsed());
         Ok(())
     }
-
-    // pub fn gen_tangents(&mut self) -> Result<(), MeshError> {
-    //     mikktspace::generate_tangents(self).then_some(()).ok_or(MeshError::FailedTangentGeneration)
-    // }
-
-    // fn index(&self, face: usize, vertex: usize) -> usize {
-    //     self.indices[face * 3 + vertex] as usize
-    // }
-
-    // fn vertex(&self, face: usize, vertex: usize) -> &Vertex {
-    //     &self.vertices[self.index(face, vertex)]
-    // }
 }
-
-// impl Geometry for Scene {
-//     fn num_faces(&self) -> usize {
-//         self.indices.len() / 3
-//     }
-
-//     fn num_vertices_of_face(&self, _face: usize) -> usize { 3 }
-
-//     fn position(&self, face: usize, vertex: usize) -> [f32; 3] {
-//         self.vertex(face, vertex).position.into()
-//     }
-
-//     fn normal(&self, face: usize, vertex: usize) -> [f32; 3] {
-//         self.vertex(face, vertex).normal.into()
-//     }
-
-//     fn tex_coord(&self, face: usize, vertex: usize) -> [f32; 2] {
-//         let v = self.vertex(face, vertex);
-//         [v.u, v.v]
-//     }
-
-//     fn set_tangent_encoded(&mut self, tangent: [f32; 4], face: usize, vert: usize) {
-//         let i = self.index(face, vert);
-//         // if self.vertices[i].tangent != Vec4::ZERO {
-//         //     // TODO: This should not happen
-//         // }
-//         self.vertices[i].tangent = Vec4::from(tangent);
-//     }
-// }
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::NoUninit)]
