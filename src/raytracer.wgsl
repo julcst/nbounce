@@ -399,8 +399,8 @@ fn hash4u(s: vec4u) -> vec4u {
     return v;
 }
 
-fn hash4f(s: vec4u) -> vec4f {
-    return vec4f(hash4u(s)) * (1.0 / f32(0xffffffffu));
+fn mapf(x: vec4u) -> vec4f {
+    return vec4f(x) * (1.0 / f32(0xffffffffu));
 }
 
 /**
@@ -452,10 +452,13 @@ fn build_tbn(hit: HitInfo) -> mat3x3f {
 }
 
 // TODO: Use Owen-Scrambled-Sobol
-fn sample_rendering_eq(rand: vec2f, dir: Ray) -> vec3f {
+fn sample_rendering_eq(seed: vec4u, dir: Ray) -> vec3f {
     var throughput = vec3f(1.0);
     var ray = dir;
+    var rand = seed;
     for (var bounces = 0u; bounces <= c.bounces; bounces += 1u) {
+        rand = hash4u(rand);
+        let randf = mapf(rand);
         let hit = intersect_TLAS(ray);
         // TODO: Multiple Importance Sampling?
         if (hit.flags & EMISSIVE) != 0u {
@@ -464,13 +467,13 @@ fn sample_rendering_eq(rand: vec2f, dir: Ray) -> vec3f {
         let alpha = hit.roughness * hit.roughness;
         let alpha2 = alpha * alpha;
         let wo = normalize(-ray.direction);
-        let wm = sample_vndf_iso(rand, wo, alpha, hit.normal); // Sample microfacet normal after Trowbridge-Reitz VNDF
+        let wm = sample_vndf_iso(randf.xy, wo, alpha, hit.normal); // Sample microfacet normal after Trowbridge-Reitz VNDF
         var wi = reflect(-wo, wm);
         let cosThetaD = dot(wo, wm); // = dot(wi, wm)
         let cosThetaI = dot(wi, hit.normal);
         let cosThetaO = dot(wo, hit.normal);
         // TODO: Importance Sample
-        if rand.x < 0.5 { // Trowbridge-Reitz-Specular
+        if randf.z < 0.5 { // Trowbridge-Reitz-Specular
             let F0 = mix(vec3f(0.04), hit.color.xyz, hit.metallic);
             let F = F_SchlickApprox(cosThetaD, F0);
             let LambdaL = Lambda_TrowbridgeReitz(cosThetaI, alpha2);
@@ -481,7 +484,7 @@ fn sample_rendering_eq(rand: vec2f, dir: Ray) -> vec3f {
             let FD90 = 0.5 + 2 * alpha * pow(cosThetaD, 2.0);
             let diffuse = (1 - hit.metallic) * hit.color.xyz * (1 + (FD90 - 1) * pow(1 - cosThetaI, 5.0)) * (1 + (FD90 - 1) * pow(1 - cosThetaO, 5.0));
             let tangent_to_world = build_tbn(hit);
-            wi = normalize(tangent_to_world * sample_cosine_hemisphere(rand));
+            wi = normalize(tangent_to_world * sample_cosine_hemisphere(randf.wx));
             throughput *= diffuse * 2.0;
         }
         
@@ -503,11 +506,12 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
         color = textureLoad(output, vec2i(id.xy));
     }
 
-    let rand = hash4f(vec4u(id.xyz, c.frame));
+    let rand = hash4u(vec4u(id.xyz, c.frame));
+    let randf = mapf(rand);
 
-    let ray = generate_ray(id, rand.xy);
+    let ray = generate_ray(id, randf.xy);
 
-    let sample = sample_rendering_eq(rand.zw, ray);
+    let sample = sample_rendering_eq(rand, ray);
     color = vec4f(mix(color.xyz, sample, c.weight), 1.0);
 
     textureStore(output, id.xy, color);
