@@ -8,7 +8,7 @@ const STACK_SIZE = 32u;
 
 // TODO: Move to uniforms
 const MAX_BOUNCES = 8u;
-const MIN_THROUGHPUT_SQ = 0.0001;
+const MIN_TH_LUMINANCE = 0.0001;
 
 @group(0) @binding(0) var output: texture_storage_2d<rgba32float, read_write>;
 
@@ -179,6 +179,9 @@ fn intersect_TLAS(ray: Ray) -> HitInfo {
                     hit.color = instance.color;
                     hit.roughness = instance.roughness;
                     hit.metallic = instance.metallic;
+                    if instance.emissive > 0.0 {
+                        hit.flags |= EMISSIVE;
+                    }
                 }
             }
         } else {
@@ -384,8 +387,11 @@ fn sample_vndf_iso(rand: vec2f, wi: vec3f, alpha: f32, n: vec3f) -> vec3f {
     return wm;
 }
 
-fn sample_uniform(rand: vec2f) -> vec3f {
-    return vec3f(0.0); // TODO
+fn sample_cosine_hemisphere(rand: vec2f) -> vec3f {
+    let phi = TWO_PI * rand.x;
+    let sinTheta = sqrt(1.0 - rand.y);
+    let cosTheta = sqrt(rand.y);
+    return vec3f(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
 }
 
 fn hash4u(s: vec4u) -> vec4u {
@@ -441,43 +447,55 @@ fn G1_TrowbridgeReitz(NdotV: f32, alpha2: f32) -> f32 {
     return 1.0 / (1.0 + lambdaV);
 }
 
+fn build_tbn(hit: HitInfo) -> mat3x3f {
+    let t = hit.tangent.xyz;
+    let b = hit.tangent.w * cross(hit.tangent.xyz, hit.normal);
+    let n = hit.normal;
+    return mat3x3f(t, b, n);
+}
+
+// TODO: Use Owen-Scrambled-Sobol
 fn sample_rendering_eq(rand: vec2f, dir: Ray) -> vec3f {
     var throughput = vec3f(1.0);
     var ray = dir;
     for (var bounces = 0u; bounces <= MAX_BOUNCES; bounces += 1u) {
         let hit = intersect_TLAS(ray);
+        // TODO: Multiple Importance Sampling?
         if (hit.flags & EMISSIVE) != 0u {
             return throughput * hit.color.xyz;
         }
-        // TODO: Multiple Importance Sampling?
         let alpha = hit.roughness * hit.roughness;
         let alpha2 = alpha * alpha;
         let wo = normalize(-ray.direction);
-        let wn = sample_vndf_iso(rand, wo, alpha, hit.normal);
-        let wi = reflect(-wo, wn);
-        let NdotL = dot(wi, hit.normal);
-        let NdotV = dot(wo, hit.normal);
-        let F = F_SchlickApprox(dot(wi, wn), hit.color.xyz);
-        let LambdaL = Lambda_TrowbridgeReitz(NdotL, alpha2);
-        let LambdaV = Lambda_TrowbridgeReitz(NdotV, alpha2);
-        let specular = F * (1.0 + LambdaV) / (1.0 + LambdaL + LambdaV); // = F * (G2 / G1)
-        throughput *= specular;
-        if dot(throughput, throughput) <= MIN_THROUGHPUT_SQ { break; }
+        let wm = sample_vndf_iso(rand, wo, alpha, hit.normal); // Sample microfacet normal after Trowbridge-Reitz VNDF
+        var wi = reflect(-wo, wm);
+        let cosThetaD = dot(wo, wm); // = dot(wi, wm)
+        let cosThetaI = dot(wi, hit.normal);
+        let cosThetaO = dot(wo, hit.normal);
+        // TODO: Importance Sample
+        if p.x < 0.5 { // Trowbridge-Reitz-Specular
+            let F0 = mix(vec3f(0.04), hit.color.xyz, hit.metallic);
+            let F = F_SchlickApprox(cosThetaD, F0);
+            let LambdaL = Lambda_TrowbridgeReitz(cosThetaI, alpha2);
+            let LambdaV = Lambda_TrowbridgeReitz(cosThetaO, alpha2);
+            let specular = F * (1 + LambdaV) / (1 + LambdaL + LambdaV); // = F * (G2 / G1)
+            throughput *= specular * 2.0;
+        } else { // Brent-Burley-Diffuse
+            let FD90 = 0.5 + 2 * alpha * pow(cosThetaD, 2.0);
+            let diffuse = (1 - hit.metallic) * hit.color.xyz * (1 + (FD90 - 1) * pow(1 - cosThetaI, 5.0)) * (1 + (FD90 - 1) * pow(1 - cosThetaO, 5.0));
+            let tangent_to_world = build_tbn(hit);
+            wi = normalize(tangent_to_world * sample_cosine_hemisphere(rand));
+            throughput *= diffuse * 2.0;
+        }
+        
+        if luminance(throughput) <= MIN_TH_LUMINANCE { break; }
         ray = Ray(hit.position, wi, 1.0 / wi);
-        // let t = hit.tangent.xyz;
-        // let b = hit.tangent.w * cross(hit.tangent.xyz, hit.normal);
-        // let n = hit.normal;
-        // let tbn = mat3x3f(t, b, n);
-        // let wo = normalize(ray.direction * tbn);
-        // let alpha = hit.roughness * hit.roughness;
-        // let wn = sample_vndf(rand, -wo, vec2f(alpha));
-        // let wi = reflect(wo, wn);
-        // throughput *= hit.color.xyz;
-        // if dot(throughput, throughput) <= MIN_THROUGHPUT_SQ { break; }
-        // let world_wi = normalize(tbn * wi);
-        // ray = Ray(hit.position, world_wi, 1.0 / world_wi);
     }
     return vec3f(0.0);
+}
+
+fn luminance(linear_rgb: vec3f) -> f32 {
+    return dot(vec3f(0.2126, 0.7152, 0.0722), linear_rgb);
 }
 
 @compute
@@ -492,7 +510,6 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 
     let ray = generate_ray(id, rand.xy);
 
-    // FIXME: Why does this progressively get darker, floating point errors?
     let sample = sample_rendering_eq(rand.zw, ray);
     color = vec4f(mix(color.xyz, sample, c.weight), 1.0);
 
