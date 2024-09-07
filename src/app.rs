@@ -99,6 +99,12 @@ impl App for MainApp {
             .always_auto_resize(true)
             .build(|| {
                 ui.text(format!("Samples {}", self.raytracer.sample_count()));
+                if ui.slider("Res", 0.1, 1.0, &mut self.raytracer.resolution_factor) {
+                    self.raytracer.resize(&self.wgpu);
+                    self.fullscreen_renderer.set_texture(&self.wgpu, self.raytracer.output_texture());
+                }
+                ui.slider("Bounces", 0, 32, &mut self.raytracer.uniforms.bounces);
+                ui.slider("Throughput", 0.0, 1.0, &mut self.raytracer.uniforms.throughput);
         });
 
         if self.camera.update(&self.wgpu) {

@@ -6,10 +6,6 @@ const NO_HIT: f32 = MAX_FLOAT;
 const EPS: f32 = 0.00000001;
 const STACK_SIZE = 32u;
 
-// TODO: Move to uniforms
-const MAX_BOUNCES = 8u;
-const MIN_TH_LUMINANCE = 0.0001;
-
 @group(0) @binding(0) var output: texture_storage_2d<rgba32float, read_write>;
 
 struct CameraData {
@@ -54,8 +50,9 @@ struct Vertex {
 
 struct PushConstants {
     frame: u32,
-    sample_count: f32,
     weight: f32,
+    bounces: u32,
+    throughput: f32,
 };
 
 var<push_constant> c: PushConstants;
@@ -458,7 +455,7 @@ fn build_tbn(hit: HitInfo) -> mat3x3f {
 fn sample_rendering_eq(rand: vec2f, dir: Ray) -> vec3f {
     var throughput = vec3f(1.0);
     var ray = dir;
-    for (var bounces = 0u; bounces <= MAX_BOUNCES; bounces += 1u) {
+    for (var bounces = 0u; bounces <= c.bounces; bounces += 1u) {
         let hit = intersect_TLAS(ray);
         // TODO: Multiple Importance Sampling?
         if (hit.flags & EMISSIVE) != 0u {
@@ -488,7 +485,7 @@ fn sample_rendering_eq(rand: vec2f, dir: Ray) -> vec3f {
             throughput *= diffuse * 2.0;
         }
         
-        if luminance(throughput) <= MIN_TH_LUMINANCE { break; }
+        if luminance(throughput) <= c.throughput { break; }
         ray = Ray(hit.position, wi, 1.0 / wi);
     }
     return vec3f(0.0);
@@ -502,7 +499,7 @@ fn luminance(linear_rgb: vec3f) -> f32 {
 @workgroup_size(COMPUTE_SIZE, COMPUTE_SIZE)
 fn main(@builtin(global_invocation_id) id: vec3u) {
     var color = vec4f(0.0);
-    if c.sample_count > 1 {
+    if c.weight > 0.0 {
         color = textureLoad(output, vec2i(id.xy));
     }
 

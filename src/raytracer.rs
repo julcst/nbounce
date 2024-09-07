@@ -10,26 +10,39 @@ pub struct Raytracer {
     pipeline: wgpu::ComputePipeline,
     output_group: wgpu::BindGroup,
     output: Texture,
-    push_constants: PushConstants,
+    pub uniforms: Uniforms,
     sample_count: f32,
+    pub resolution_factor: f32,
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, bytemuck::NoUninit)]
-struct PushConstants {
+#[derive(Clone, Copy, Debug, bytemuck::NoUninit)]
+pub struct Uniforms {
     frame: u32,
-    sample_count: f32,
     weight: f32,
+    pub bounces: u32,
+    pub throughput: f32,
+}
+
+impl Default for Uniforms {
+    fn default() -> Self {
+        Self { 
+            frame: 0,
+            weight: 0.0,
+            bounces: 8,
+            throughput: 0.01,
+        }
+    }
 }
 
 impl Raytracer {
-    const RESOLUTION_FACTOR: f32 = 0.3;
     const COMPUTE_SIZE: u32 = 8;
 
     pub fn new(wgpu: &WGPUContext, scene: &SceneBuffers, camera: &CameraController) -> Self {
         let module = wgpu.device.create_shader_module(wgpu::include_wgsl!("raytracer.wgsl"));
 
-        let output = Self::create_output_texture(wgpu);
+        let resolution_factor = 0.3;
+        let output = Self::create_output_texture(wgpu, resolution_factor);
 
         let output_layout = wgpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Raytracer Output Layout"),
@@ -63,7 +76,7 @@ impl Raytracer {
             bind_group_layouts: &[&output_layout, camera.layout(), scene.layout()],
             push_constant_ranges: &[PushConstantRange {
                 stages: wgpu::ShaderStages::COMPUTE,
-                range: 0..std::mem::size_of::<PushConstants>() as u32,
+                range: 0..std::mem::size_of::<Uniforms>() as u32,
             }],
         });
 
@@ -82,11 +95,18 @@ impl Raytracer {
             cache: None,
         });
 
-        Self { pipeline, output_group, output, push_constants: PushConstants::default(), sample_count: 0.0 }
+        Self { 
+            pipeline,
+            output_group,
+            output,
+            uniforms: Uniforms::default(),
+            sample_count: 0.0,
+            resolution_factor,
+        }
     }
 
-    fn create_output_texture(wgpu: &WGPUContext) -> Texture {
-        let dim = uvec2(wgpu.config.width, wgpu.config.height).as_vec2() * Self::RESOLUTION_FACTOR;
+    fn create_output_texture(wgpu: &WGPUContext, resolution_factor: f32) -> Texture {
+        let dim = uvec2(wgpu.config.width, wgpu.config.height).as_vec2() * resolution_factor;
         let dim = dim.as_uvec2() / Self::COMPUTE_SIZE * Self::COMPUTE_SIZE;
 
         let size = wgpu::Extent3d {
@@ -102,7 +122,7 @@ impl Raytracer {
     }
 
     pub fn resize(&mut self, wgpu: &WGPUContext) {
-        self.output = Self::create_output_texture(wgpu);
+        self.output = Self::create_output_texture(wgpu, self.resolution_factor);
 
         self.output_group = wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Blit Bind Group"),
@@ -114,6 +134,8 @@ impl Raytracer {
                 },
             ]
         });
+
+        self.invalidate();
     }
 
     pub fn sample_count(&self) -> u32 {
@@ -133,11 +155,10 @@ impl Raytracer {
         cpass.set_bind_group(0, &self.output_group, &[]);
         cpass.set_bind_group(1, camera.bind_group(), &[]);
         cpass.set_bind_group(2, scene.bind_group(), &[]);
-        self.push_constants.frame += 1;
         self.sample_count += 1.0;
-        self.push_constants.sample_count = self.sample_count;
-        self.push_constants.weight = 1.0 / self.sample_count;
-        cpass.set_push_constants(0, bytemuck::cast_slice(&[self.push_constants]));
+        self.uniforms.frame += 1;
+        self.uniforms.weight = 1.0 / self.sample_count;
+        cpass.set_push_constants(0, bytemuck::cast_slice(&[self.uniforms]));
         let n_workgroups = self.output.size().xy() / Self::COMPUTE_SIZE;
         cpass.dispatch_workgroups(n_workgroups.x, n_workgroups.y, 1);
     }
