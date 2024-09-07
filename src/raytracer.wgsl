@@ -473,7 +473,7 @@ fn sample_rendering_eq(rand: vec2f, dir: Ray) -> vec3f {
         let cosThetaI = dot(wi, hit.normal);
         let cosThetaO = dot(wo, hit.normal);
         // TODO: Importance Sample
-        if p.x < 0.5 { // Trowbridge-Reitz-Specular
+        if rand.x < 0.5 { // Trowbridge-Reitz-Specular
             let F0 = mix(vec3f(0.04), hit.color.xyz, hit.metallic);
             let F = F_SchlickApprox(cosThetaD, F0);
             let LambdaL = Lambda_TrowbridgeReitz(cosThetaI, alpha2);

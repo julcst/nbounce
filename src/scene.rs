@@ -153,16 +153,21 @@ impl Scene {
                 let normals = reader.read_normals().ok_or(MeshError::MissingNormals)?;
                 let texcoords = reader.read_tex_coords(0).ok_or(MeshError::MissingTexCoords)?.into_f32();
 
-                // TODO: Read tangents if possible
                 let start_vertex = self.vertices.len() as u32;
-                for ((position, normal), texcoord) in positions.zip(normals).zip(texcoords) {
-                    self.vertices.push(Vertex {
-                        position: Vec3::from(position),
-                        u: texcoord[0],
-                        normal: Vec3::from(normal),
-                        v: texcoord[1],
-                        tangent: Vec4::ZERO,
-                    });
+
+                if let Some(tangents) = reader.read_tangents() {
+                    for (((position, normal), texcoord), tangent) in positions.zip(normals).zip(texcoords).zip(tangents) {
+                        self.vertices.push(Vertex {
+                            position: Vec3::from(position),
+                            u: texcoord[0],
+                            normal: Vec3::from(normal),
+                            v: texcoord[1],
+                            tangent: Vec4::from(tangent),
+                        });
+                    }
+                } else {
+                    // TODO: Generate tangents using mikktspace
+                    unimplemented!();
                 }
 
                 let start_index = self.indices.len() as u32;
@@ -209,47 +214,47 @@ impl Scene {
         Ok(())
     }
 
-    pub fn gen_tangents(&mut self) -> Result<(), MeshError> {
-        mikktspace::generate_tangents(self).then_some(()).ok_or(MeshError::FailedTangentGeneration)
-    }
+    // pub fn gen_tangents(&mut self) -> Result<(), MeshError> {
+    //     mikktspace::generate_tangents(self).then_some(()).ok_or(MeshError::FailedTangentGeneration)
+    // }
 
-    fn index(&self, face: usize, vertex: usize) -> usize {
-        self.indices[face * 3 + vertex] as usize
-    }
+    // fn index(&self, face: usize, vertex: usize) -> usize {
+    //     self.indices[face * 3 + vertex] as usize
+    // }
 
-    fn vertex(&self, face: usize, vertex: usize) -> &Vertex {
-        &self.vertices[self.index(face, vertex)]
-    }
+    // fn vertex(&self, face: usize, vertex: usize) -> &Vertex {
+    //     &self.vertices[self.index(face, vertex)]
+    // }
 }
 
-impl Geometry for Scene {
-    fn num_faces(&self) -> usize {
-        self.indices.len() / 3
-    }
+// impl Geometry for Scene {
+//     fn num_faces(&self) -> usize {
+//         self.indices.len() / 3
+//     }
 
-    fn num_vertices_of_face(&self, _face: usize) -> usize { 3 }
+//     fn num_vertices_of_face(&self, _face: usize) -> usize { 3 }
 
-    fn position(&self, face: usize, vertex: usize) -> [f32; 3] {
-        self.vertex(face, vertex).position.into()
-    }
+//     fn position(&self, face: usize, vertex: usize) -> [f32; 3] {
+//         self.vertex(face, vertex).position.into()
+//     }
 
-    fn normal(&self, face: usize, vertex: usize) -> [f32; 3] {
-        self.vertex(face, vertex).normal.into()
-    }
+//     fn normal(&self, face: usize, vertex: usize) -> [f32; 3] {
+//         self.vertex(face, vertex).normal.into()
+//     }
 
-    fn tex_coord(&self, face: usize, vertex: usize) -> [f32; 2] {
-        let v = self.vertex(face, vertex);
-        [v.u, v.v]
-    }
+//     fn tex_coord(&self, face: usize, vertex: usize) -> [f32; 2] {
+//         let v = self.vertex(face, vertex);
+//         [v.u, v.v]
+//     }
 
-    fn set_tangent_encoded(&mut self, tangent: [f32; 4], face: usize, vert: usize) {
-        let i = self.index(face, vert);
-        // if self.vertices[i].tangent != Vec4::ZERO {
-        //     // TODO: This should not happen
-        // }
-        self.vertices[i].tangent = Vec4::from(tangent);
-    }
-}
+//     fn set_tangent_encoded(&mut self, tangent: [f32; 4], face: usize, vert: usize) {
+//         let i = self.index(face, vert);
+//         // if self.vertices[i].tangent != Vec4::ZERO {
+//         //     // TODO: This should not happen
+//         // }
+//         self.vertices[i].tangent = Vec4::from(tangent);
+//     }
+// }
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::NoUninit)]
