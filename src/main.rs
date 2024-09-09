@@ -2,7 +2,7 @@ mod app;
 mod common;
 mod blit_renderer;
 mod mesh_renderer;
-mod raytracer;
+mod pathtracer;
 mod bvh;
 mod scene;
 mod uniform_buffer;

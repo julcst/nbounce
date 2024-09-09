@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
 use glam::{uvec2, Vec3Swizzles};
-use wgpu::PushConstantRange;
+use wgpu::{PushConstantRange, ShaderModuleDescriptor};
 
 use crate::common::{CameraController, Texture, WGPUContext};
 use crate::scene::SceneBuffers;
 
-pub struct Raytracer {
+pub struct Pathtracer {
     pipeline: wgpu::ComputePipeline,
     output_group: wgpu::BindGroup,
     output: Texture,
@@ -35,11 +35,15 @@ impl Default for Uniforms {
     }
 }
 
-impl Raytracer {
+impl Pathtracer {
     const COMPUTE_SIZE: u32 = 8;
 
     pub fn new(wgpu: &WGPUContext, scene: &SceneBuffers, camera: &CameraController) -> Self {
-        let module = wgpu.device.create_shader_module(wgpu::include_wgsl!("raytracer.wgsl"));
+        // TODO: Refactor into macro
+        let module = wgpu.device.create_shader_module(ShaderModuleDescriptor {
+            label: Some("Pathtracing Shader"),
+            source: wgpu::ShaderSource::Wgsl((include_str!("pathtracing.wgsl").to_owned() + include_str!("swraytracing.wgsl")).into()),
+        });
 
         let resolution_factor = 0.3;
         let output = Self::create_output_texture(wgpu, resolution_factor);

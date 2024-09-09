@@ -8,7 +8,7 @@ use crate::common::{App, CameraController, ImGuiContext, PerformanceMetrics, Tex
 
 use crate::blit_renderer::BlitRenderer;
 use crate::mesh_renderer::MeshRenderer;
-use crate::raytracer::Raytracer;
+use crate::pathtracer::Pathtracer;
 
 #[allow(dead_code)]
 pub struct MainApp {
@@ -21,7 +21,7 @@ pub struct MainApp {
     scene: SceneBuffers,
     fullscreen_renderer: BlitRenderer,
     mesh_renderer: MeshRenderer,
-    raytracer: Raytracer,
+    raytracer: Pathtracer,
     camera: CameraController,
 }
 
@@ -39,7 +39,7 @@ impl App for MainApp {
 
         let mesh_renderer = MeshRenderer::new(&wgpu, &camera);
         let depth_texture = Texture::create_depth(&wgpu);
-        let raytracer = Raytracer::new(&wgpu, &scene, &camera);
+        let raytracer = Pathtracer::new(&wgpu, &scene, &camera);
         let fullscreen_renderer = BlitRenderer::new(&wgpu, raytracer.output_texture());
 
         Self {
@@ -103,8 +103,10 @@ impl App for MainApp {
                     self.raytracer.resize(&self.wgpu);
                     self.fullscreen_renderer.set_texture(&self.wgpu, self.raytracer.output_texture());
                 }
-                ui.slider("Bounces", 0, 32, &mut self.raytracer.uniforms.bounces);
-                ui.slider("Throughput", 0.0, 1.0, &mut self.raytracer.uniforms.throughput);
+                let mut updated = false;
+                updated |= ui.slider("Bounces", 0, 32, &mut self.raytracer.uniforms.bounces);
+                updated |= ui.slider("Throughput", 0.0, 1.0, &mut self.raytracer.uniforms.throughput);
+                if updated { self.raytracer.invalidate(); }
         });
 
         if self.camera.update(&self.wgpu) {
