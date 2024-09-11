@@ -67,7 +67,7 @@ impl App for MainApp {
         }
         self.wgpu.resize(new_size);
         self.depth_texture = Texture::create_depth(&self.wgpu);
-        self.raytracer.resize(&self.wgpu);
+        self.raytracer.update(&self.wgpu, &self.camera);
         self.fullscreen_renderer.set_texture(&self.wgpu, self.raytracer.output_texture());
     }
 
@@ -94,18 +94,19 @@ impl App for MainApp {
                     self.window.inner_size().height));
         });
 
+        // TODO: Add Scene+Skybox switching
         ui.window("Settings")
             .size([1.0, 1.0], imgui::Condition::FirstUseEver)
             .always_auto_resize(true)
             .build(|| {
-                ui.text(format!("Samples {}", self.raytracer.sample_count()));
+                ui.text(format!("Sample {}/{}", self.raytracer.sample_count(), self.raytracer.max_sample_count));
                 if ui.slider("Res", 0.1, 1.0, &mut self.raytracer.resolution_factor) {
-                    self.raytracer.resize(&self.wgpu);
+                    self.raytracer.update(&self.wgpu, &self.camera);
                     self.fullscreen_renderer.set_texture(&self.wgpu, self.raytracer.output_texture());
                 }
                 let mut updated = false;
-                updated |= ui.slider("Bounces", 0, 32, &mut self.raytracer.uniforms.bounces);
-                updated |= ui.slider("Throughput", 0.0, 1.0, &mut self.raytracer.uniforms.throughput);
+                updated |= ui.slider("Bounces", 0, 32, &mut self.raytracer.globals.bounces);
+                updated |= ui.slider("Throughput", 0.0, 1.0, &mut self.raytracer.globals.throughput);
                 if updated { self.raytracer.invalidate(); }
         });
 
@@ -124,7 +125,7 @@ impl App for MainApp {
             label: Some("Render Encoder"),
         });
 
-        self.raytracer.dispatch(&mut encoder, &self.scene, &self.camera);
+        self.raytracer.dispatch(&mut encoder, &self.scene);
 
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

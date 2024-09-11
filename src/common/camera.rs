@@ -1,4 +1,5 @@
 use glam::{Mat4, Quat, Vec2, Vec3};
+use wgpu::util::{DeviceExt, BufferInitDescriptor};
 use std::f32::consts::PI;
 
 use super::WGPUContext;
@@ -22,42 +23,18 @@ pub struct CameraController {
     is_dirty: bool,
     data: CameraBuffer,
     buffer: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
-    layout: wgpu::BindGroupLayout,
 }
 
 impl CameraController {
     pub const ALTITUDE_DELTA: f32 = 0.01;
 
     pub fn new(wgpu: &WGPUContext) -> Self {
-        let buffer = wgpu.device.create_buffer(&wgpu::BufferDescriptor {
+        let data = CameraBuffer::default();
+
+        let buffer = wgpu.device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Camera Buffer"),
-            size: std::mem::size_of::<CameraBuffer>() as u64,
+            contents: bytemuck::bytes_of(&data),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let layout = wgpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Camera Bind Group Layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-
-        let bind_group = wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Camera Bind Group"),
-            layout: &layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buffer.as_entire_binding(),
-            }],
         });
 
         Self {
@@ -71,17 +48,7 @@ impl CameraController {
             is_dirty: true,
             data: CameraBuffer::default(),
             buffer,
-            bind_group,
-            layout,
         }
-    }
-
-    pub fn bind_group(&self) -> &wgpu::BindGroup {
-        &self.bind_group
-    }
-
-    pub fn layout(&self) -> &wgpu::BindGroupLayout {
-        &self.layout
     }
 
     pub fn orbit(&mut self, delta: Vec2) {
@@ -177,7 +144,7 @@ impl CameraController {
     pub fn update(&mut self, wgpu: &WGPUContext) -> bool {
         if self.is_dirty {
             self.data = self.calc_camera_data();
-            wgpu.queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&[self.data]));
+            wgpu.queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&self.data));
             self.is_dirty = false;
             true
         } else {
@@ -185,7 +152,7 @@ impl CameraController {
         }
     }
 
-    pub fn data_as_u8(&self) -> &[u8] {
-        bytemuck::bytes_of(&self.data)
+    pub fn buffer_binding(&self) -> wgpu::BindingResource {
+        self.buffer.as_entire_binding()
     }
 }

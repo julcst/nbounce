@@ -5,7 +5,6 @@ mod mesh_renderer;
 mod pathtracer;
 mod bvh;
 mod scene;
-mod uniform_buffer;
 
 use app::MainApp;
 use winit::event_loop::{ControlFlow, EventLoop};

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::{mem, ops::Range, path::Path};
 
 use glam::{Mat4, Vec3, Vec4};
+use itertools::izip;
 use wgpu::util::DeviceExt;
 
 use crate::bvh::{self, BVHPrimitive, BVHTree};
@@ -154,7 +155,7 @@ impl Scene {
                 let start_index = self.indices.len() as u32;
 
                 if let Some(tangents) = reader.read_tangents() {
-                    for (((position, normal), texcoord), tangent) in positions.zip(normals).zip(texcoords).zip(tangents) {
+                    for (position, normal, texcoord, tangent) in izip!(positions, normals, texcoords, tangents) {
                         self.vertices.push(Vertex {
                             position: Vec3::from(position),
                             u: texcoord[0],

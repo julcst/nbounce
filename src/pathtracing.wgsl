@@ -1,18 +1,19 @@
 const COMPUTE_SIZE: u32 = 8u;
 const PI: f32 = 3.14159265359;
 const TWO_PI: f32 = 2.0 * PI;
-
-@group(0) @binding(0) var output: texture_storage_2d<rgba32float, read_write>;
+const LDS_PER_BOUNCE: u32 = 2u;
 
 struct CameraData {
     world_to_clip: mat4x4f,
     clip_to_world: mat4x4f,
 };
 
-@group(1) @binding(0) var<uniform> camera: CameraData;
+@group(0) @binding(0) var output: texture_storage_2d<rgba32float, read_write>;
+@group(0) @binding(1) var<uniform> camera: CameraData;
+@group(0) @binding(2) var<storage, read> sobol_burley: array<vec4f>;
 
 struct PushConstants {
-    frame: u32,
+    sample: u32,
     weight: f32,
     bounces: u32,
     throughput: f32,
@@ -97,6 +98,15 @@ fn sample_cosine_hemisphere(rand: vec2f) -> vec3f {
     return vec3f(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
 }
 
+fn hash2u(s: vec2u) -> vec2u {
+    var v = s * 1664525u + 1013904223u;
+    v.x += v.y * 1664525u; v.y += v.x * 1664525u;
+    v ^= v >> vec2u(16u);
+    v.x += v.y * 1664525u; v.y += v.x * 1664525u;
+    v ^= v >> vec2u(16u);
+    return v;
+}
+
 fn hash4u(s: vec4u) -> vec4u {
     var v = s * 1664525u + 1013904223u;
     v.x += v.y * v.w; v.y += v.z * v.x; v.z += v.x * v.y; v.w += v.y * v.z;
@@ -105,8 +115,14 @@ fn hash4u(s: vec4u) -> vec4u {
     return v;
 }
 
-fn mapf(x: vec4u) -> vec4f {
-    return vec4f(x) * (1.0 / f32(0xffffffffu));
+/// Maps a random u32 to a random float in [0,1), see https://blog.bithole.dev/blogposts/random-float/
+fn map4f(x: vec4u) -> vec4f {
+    return bitcast<vec4f>((x >> vec4u(9u)) | vec4u(0x3F800000u)) - 1.0;
+}
+
+/// Maps a random u32 to a random float in [0,1), see https://blog.bithole.dev/blogposts/random-float/
+fn map2f(x: vec2u) -> vec2f {
+    return bitcast<vec2f>((x >> vec2u(9u)) | vec2u(0x3F800000u)) - 1.0;
 }
 
 /**
@@ -157,14 +173,18 @@ fn build_tbn(hit: HitInfo) -> mat3x3f {
     return mat3x3f(t, b, n);
 }
 
+/// Takes a precomputed Sobol-Burley sample and performs a Cranly-Patterson-Rotation
+fn sample_sobol_burley(i: u32, bounce: u32, shift: vec4f, dim: u32) -> vec4f {
+    let sample = sobol_burley[(i * c.bounces + bounce) * 2u + dim];
+    return fract(sample + shift);
+}
+
 // TODO: Use Owen-Scrambled-Sobol
-fn sample_rendering_eq(seed: vec4u, dir: Ray) -> vec3f {
+fn sample_rendering_eq(sample: u32, shift: vec4f, dir: Ray) -> vec3f {
     var throughput = vec3f(1.0);
     var ray = dir;
-    var rand = seed;
-    for (var bounces = 0u; bounces <= c.bounces; bounces += 1u) {
-        rand = hash4u(rand);
-        let randf = mapf(rand);
+    for (var bounce = 0u; bounce <= c.bounces; bounce += 1u) {
+        let sobol_0 = sample_sobol_burley(sample, bounce, shift, 0u);
         let hit = intersect_TLAS(ray);
         // TODO: Multiple Importance Sampling?
         if (hit.flags & EMISSIVE) != 0u {
@@ -173,13 +193,13 @@ fn sample_rendering_eq(seed: vec4u, dir: Ray) -> vec3f {
         let alpha = hit.roughness * hit.roughness;
         let alpha2 = alpha * alpha;
         let wo = normalize(-ray.direction);
-        let wm = sample_vndf_iso(randf.xy, wo, alpha, hit.normal); // Sample microfacet normal after Trowbridge-Reitz VNDF
+        let wm = sample_vndf_iso(sobol_0.xy, wo, alpha, hit.normal); // Sample microfacet normal after Trowbridge-Reitz VNDF
         var wi = reflect(-wo, wm);
         let cosThetaD = dot(wo, wm); // = dot(wi, wm)
         let cosThetaI = dot(wi, hit.normal);
         let cosThetaO = dot(wo, hit.normal);
         // TODO: Importance Sample
-        if randf.z < 0.5 { // Trowbridge-Reitz-Specular
+        if sobol_0.z < 0.5 { // Trowbridge-Reitz-Specular
             // FIXME: Artifacts on the blue suzanne head, maybe because of rotation
             let F0 = mix(vec3f(0.04), hit.color.xyz, hit.metallic);
             let F = F_SchlickApprox(cosThetaD, F0);
@@ -188,10 +208,11 @@ fn sample_rendering_eq(seed: vec4u, dir: Ray) -> vec3f {
             let specular = F * (1 + LambdaV) / (1 + LambdaL + LambdaV); // = F * (G2 / G1)
             throughput *= specular * 2.0;
         } else { // Brent-Burley-Diffuse
+            let sobol_1 = sample_sobol_burley(sample, bounce, shift, 1u);
             let FD90 = 0.5 + 2 * alpha * pow(cosThetaD, 2.0);
             let diffuse = (1 - hit.metallic) * hit.color.xyz * (1 + (FD90 - 1) * pow(1 - cosThetaI, 5.0)) * (1 + (FD90 - 1) * pow(1 - cosThetaO, 5.0));
             let tangent_to_world = build_tbn(hit);
-            wi = normalize(tangent_to_world * sample_cosine_hemisphere(randf.wx));
+            wi = normalize(tangent_to_world * sample_cosine_hemisphere(sobol_1.xy));
             throughput *= diffuse * 2.0;
         }
         
@@ -213,12 +234,12 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
         color = textureLoad(output, vec2i(id.xy));
     }
 
-    let rand = hash4u(vec4u(id.xyz, c.frame));
-    let randf = mapf(rand);
+    let shift = map4f(hash4u(vec4u(id.xyzx)));
 
-    let ray = generate_ray(id, randf.xy);
+    let jitter = sample_sobol_burley(c.sample, 2u, shift, 1u);
+    let ray = generate_ray(id, jitter.xw);
 
-    let sample = sample_rendering_eq(rand, ray);
+    let sample = sample_rendering_eq(c.sample, shift, ray);
     color = vec4f(mix(color.xyz, sample, c.weight), 1.0);
 
     textureStore(output, id.xy, color);

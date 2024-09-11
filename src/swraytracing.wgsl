@@ -28,13 +28,13 @@ struct Vertex {
     tangent: vec4f,
 };
 
-@group(2) @binding(0) var<storage, read> blas: array<BVHNode>;
-@group(2) @binding(1) var<storage, read> tlas: array<BVHNode>;
-@group(2) @binding(2) var<storage, read> instances: array<Instance>;
-@group(2) @binding(3) var<storage, read> vertices: array<Vertex>;
-@group(2) @binding(4) var<storage, read> indices: array<u32>;
-@group(2) @binding(5) var environment: texture_cube<f32>;
-@group(2) @binding(6) var environment_sampler: sampler;
+@group(1) @binding(0) var<storage, read> blas: array<BVHNode>;
+@group(1) @binding(1) var<storage, read> tlas: array<BVHNode>;
+@group(1) @binding(2) var<storage, read> instances: array<Instance>;
+@group(1) @binding(3) var<storage, read> vertices: array<Vertex>;
+@group(1) @binding(4) var<storage, read> indices: array<u32>;
+@group(1) @binding(5) var environment: texture_cube<f32>;
+@group(1) @binding(6) var environment_sampler: sampler;
 
 struct Ray {
     origin: vec3f,
