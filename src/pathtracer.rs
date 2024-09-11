@@ -51,7 +51,7 @@ impl Pathtracer {
 
         let globals = Globals::default();
         let max_sample_count = 1024;
-        let dims = globals.bounces * Self::LDS_PER_BOUNCE;
+        let dims = globals.bounces * Self::LDS_PER_BOUNCE + 1;
         let n = max_sample_count;
 
         // TODO: maybe dynamically generate LDS per frame

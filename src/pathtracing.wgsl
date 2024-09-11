@@ -1,7 +1,6 @@
 const COMPUTE_SIZE: u32 = 8u;
 const PI: f32 = 3.14159265359;
 const TWO_PI: f32 = 2.0 * PI;
-const LDS_PER_BOUNCE: u32 = 2u;
 
 struct CameraData {
     world_to_clip: mat4x4f,
@@ -173,9 +172,18 @@ fn build_tbn(hit: HitInfo) -> mat3x3f {
     return mat3x3f(t, b, n);
 }
 
-/// Takes a precomputed Sobol-Burley sample and performs a Cranly-Patterson-Rotation
-fn sample_sobol_burley(i: u32, bounce: u32, shift: vec4f, dim: u32) -> vec4f {
-    let sample = sobol_burley[(i * c.bounces + bounce) * 2u + dim];
+const LDS_PER_BOUNCE: u32 = 2u;
+
+/// Takes a precomputed Sobol-Burley sample and performs a Cranly-Patterson-Rotation with a per pixel shift.
+/// For each sample the precomputed Sobol-Burley array contains first one vec4f for lens and pixel sampling and
+/// then two vec4f for each bounce.
+fn sample_sobol_burley_bounce(i: u32, bounce: u32, shift: vec4f, dim: u32) -> vec4f {
+    let sample = sobol_burley[(i * (c.bounces + 1u) + bounce + 1u) * LDS_PER_BOUNCE + dim];
+    return fract(sample + shift);
+}
+
+fn sample_sobol_burley_extra(i: u32, shift: vec4f) -> vec4f {
+    let sample = sobol_burley[i * (c.bounces + 1u)];
     return fract(sample + shift);
 }
 
@@ -184,7 +192,7 @@ fn sample_rendering_eq(sample: u32, shift: vec4f, dir: Ray) -> vec3f {
     var throughput = vec3f(1.0);
     var ray = dir;
     for (var bounce = 0u; bounce <= c.bounces; bounce += 1u) {
-        let sobol_0 = sample_sobol_burley(sample, bounce, shift, 0u);
+        let sobol_0 = sample_sobol_burley_bounce(sample, bounce, shift, 0u);
         let hit = intersect_TLAS(ray);
         // TODO: Multiple Importance Sampling?
         if (hit.flags & EMISSIVE) != 0u {
@@ -208,7 +216,7 @@ fn sample_rendering_eq(sample: u32, shift: vec4f, dir: Ray) -> vec3f {
             let specular = F * (1 + LambdaV) / (1 + LambdaL + LambdaV); // = F * (G2 / G1)
             throughput *= specular * 2.0;
         } else { // Brent-Burley-Diffuse
-            let sobol_1 = sample_sobol_burley(sample, bounce, shift, 1u);
+            let sobol_1 = sample_sobol_burley_bounce(sample, bounce, shift, 1u);
             let FD90 = 0.5 + 2 * alpha * pow(cosThetaD, 2.0);
             let diffuse = (1 - hit.metallic) * hit.color.xyz * (1 + (FD90 - 1) * pow(1 - cosThetaI, 5.0)) * (1 + (FD90 - 1) * pow(1 - cosThetaO, 5.0));
             let tangent_to_world = build_tbn(hit);
@@ -236,8 +244,8 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
 
     let shift = map4f(hash4u(vec4u(id.xyzx)));
 
-    let jitter = sample_sobol_burley(c.sample, 2u, shift, 1u);
-    let ray = generate_ray(id, jitter.xw);
+    let jitter = sample_sobol_burley_extra(c.sample, shift);
+    let ray = generate_ray(id, jitter.xy);
 
     let sample = sample_rendering_eq(c.sample, shift, ray);
     color = vec4f(mix(color.xyz, sample, c.weight), 1.0);
