@@ -175,15 +175,17 @@ fn build_tbn(hit: HitInfo) -> mat3x3f {
 const LDS_PER_BOUNCE: u32 = 2u;
 
 /// Takes a precomputed Sobol-Burley sample and performs a Cranly-Patterson-Rotation with a per pixel shift.
-/// For each sample the precomputed Sobol-Burley array contains first one vec4f for lens and pixel sampling and
-/// then two vec4f for each bounce.
+/// For each sample the precomputed Sobol-Burley array contains first two vec4f for each bounce an then
+/// one vec4f for lens and pixel sampling.
 fn sample_sobol_burley_bounce(i: u32, bounce: u32, shift: vec4f, dim: u32) -> vec4f {
-    let sample = sobol_burley[(i * (c.bounces + 1u) + bounce + 1u) * LDS_PER_BOUNCE + dim];
+    let lds_stride = c.bounces * LDS_PER_BOUNCE + 1u;
+    let sample = sobol_burley[i * lds_stride + 1u + bounce * LDS_PER_BOUNCE + dim];
     return fract(sample + shift);
 }
 
 fn sample_sobol_burley_extra(i: u32, shift: vec4f) -> vec4f {
-    let sample = sobol_burley[i * (c.bounces + 1u)];
+    let lds_stride = c.bounces * LDS_PER_BOUNCE + 1u;
+    let sample = sobol_burley[i * lds_stride];
     return fract(sample + shift);
 }
 
