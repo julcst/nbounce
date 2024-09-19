@@ -199,24 +199,32 @@ fn sample_rendering_eq(sample: u32, shift: vec4f, dir: Ray) -> vec3f {
     var throughput = vec3f(1.0);
     var ray = dir;
     for (var bounce = 0u; bounce <= c.bounces; bounce += 1u) {
-        let sobol_0 = sample_sobol_burley_bounce(sample, bounce, shift, 0u);
         let hit = intersect_TLAS(ray);
 
         // TODO: Multiple Importance Sampling?
         if (hit.flags & EMISSIVE) != 0u {
             return throughput * hit.color.xyz;
         }
+
+        // Collect hit info
         let alpha = hit.roughness * hit.roughness;
         let alpha2 = alpha * alpha;
         let N = normalize(hit.normal);
+        let tangent_to_world = build_tbn(hit);
+
+        // Collect bounce info
+        let sobol_0 = sample_sobol_burley_bounce(sample, bounce, shift, 0u);
+        let sobol_1 = sample_sobol_burley_bounce(sample, bounce, shift, 1u);
         let wo = normalize(-ray.direction);
-        let wm = sample_vndf_iso(sobol_0.xy, wo, alpha, N); // Sample microfacet normal after Trowbridge-Reitz VNDF
-        var wi = reflect(-wo, wm);
-        let cosThetaD = dot(wo, wm); // = dot(wi, wm)
-        let cosThetaI = dot(wi, N);
         let cosThetaO = dot(wo, N);
+        var wi: vec3f;
+
         // TODO: Importance Sample
-        if sobol_0.z < 0.5 { // Trowbridge-Reitz-Specular
+        if sobol_0.x < 0.5 { // Trowbridge-Reitz-Specular
+            let wm = sample_vndf_iso(sobol_0.yz, wo, alpha, N); // Sample microfacet normal after Trowbridge-Reitz VNDF
+            wi = reflect(-wo, wm);
+            let cosThetaD = dot(wo, wm); // = dot(wi, wm)
+            let cosThetaI = dot(wi, N);
             let F0 = mix(vec3f(0.04), hit.color.xyz, hit.metallic);
             let F = F_SchlickApprox(cosThetaD, F0);
             let LambdaL = Lambda_TrowbridgeReitz(cosThetaI, alpha2);
@@ -224,15 +232,21 @@ fn sample_rendering_eq(sample: u32, shift: vec4f, dir: Ray) -> vec3f {
             let specular = F * (1 + LambdaV) / (1 + LambdaL + LambdaV); // = F * (G2 / G1)
             throughput *= specular * 2.0;
         } else { // Brent-Burley-Diffuse
-            let sobol_1 = sample_sobol_burley_bounce(sample, bounce, shift, 1u);
-            let FD90 = 0.5 + 2 * alpha * pow(cosThetaD, 2.0);
-            let diffuse = (1 - hit.metallic) * hit.color.xyz * (1 + (FD90 - 1) * pow(1 - cosThetaI, 5.0)) * (1 + (FD90 - 1) * pow(1 - cosThetaO, 5.0));
-            let tangent_to_world = build_tbn(hit);
+            // FIXME: artifact at tangent seam
             wi = normalize(tangent_to_world * sample_cosine_hemisphere(sobol_1.xy));
+            let wm = normalize(wi + wo); // Microfacect normal is the half vector
+            let cosThetaD = dot(wi, wm); // = dot(wo, wm)
+            let cosThetaI = dot(wi, N);
+            let FD90 = 0.5 + 2 * alpha * pow(cosThetaD, 2.0);
+            let response = (1 + (FD90 - 1) * pow(1 - cosThetaI, 5.0)) * (1 + (FD90 - 1) * pow(1 - cosThetaO, 5.0));
+            // Note: We drop the 1.0 / PI prefactor
+            let diffuse = (1 - hit.metallic) * hit.color.xyz * response;
             throughput *= diffuse * 2.0;
+            // return vec3f(FD90);
         }
         
         // TODO: Debug negative throughput
+        // TODO: Do unbiased Russian Roulette
         if luminance(throughput) <= c.throughput { break; }
         ray = Ray(hit.position, wi, 1.0 / wi);
     }
