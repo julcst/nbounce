@@ -1,6 +1,7 @@
 const MAX_FLOAT: f32 = 0x1.fffffep+127f;
 const NO_HIT: f32 = MAX_FLOAT;
 const EPS: f32 = 0.00000001;
+const BIAS: f32 = 0.1;
 const STACK_SIZE = 32u;
 
 struct BVHNode {
@@ -57,20 +58,21 @@ fn intersect_triangle(ray: Ray, v0: vec3f, v1: vec3f, v2: vec3f) -> vec3f {
     if det < EPS { // Backface culling: det < EPS
         return vec3f(NO_HIT, NO_HIT, NO_HIT); // Parallel or culled
     }
-    var inv_det = 1 / det;
+    var inv_det = 1.0 / det;
     var s = ray.origin - v0;
     var u = inv_det * dot(s, h);
-    if u < 0 || u > 1 {
+    if u < 0.0 || u > 1.0 {
         return vec3f(NO_HIT, NO_HIT, NO_HIT); // Outside
     }
     var q = cross(s, edge1);
     var v = inv_det * dot(ray.direction, q);
-    if v < 0 || u + v > 1 {
+    if v < 0.0 || u + v > 1.0 {
         return vec3f(NO_HIT, NO_HIT, NO_HIT); // Outside
     }
     var t = inv_det * dot(edge2, q);
-    // TODO: Fix near plane for reflections
-    if t < 0.0 {
+    // TODO: Fix near plane for reflections, setting BIAS to 0.0 results in artifacts
+    // See https://www.pbr-book.org/4ed/Shapes/Managing_Rounding_Error for better solution
+    if t < BIAS {
         return vec3f(NO_HIT, NO_HIT, NO_HIT); // Behind
     }
     return vec3f(t, u, v);
@@ -89,15 +91,18 @@ fn intersect_AABB(ray: Ray, aabb: AABB) -> f32 {
 
 const EMISSIVE = 1u;
 
+// Note: The fields are ordered to be aligned to 16 bytes
 struct HitInfo {
     position: vec3f,
     dist: f32,
+    // Note: this is unnormalized to enable MikkTSpace
     normal: vec3f,
     n_aabb: u32,
     texcoord: vec2f,
     n_tri: u32,
     roughness: f32,
     color: vec4f,
+    // Note: this is unnormalized to enable MikkTSpace
     tangent: vec4f,
     metallic: f32,
     flags: u32,
@@ -149,7 +154,7 @@ fn intersect_TLAS(ray: Ray) -> HitInfo {
                 if hit_local.dist < hit.dist {
                     hit.dist = hit_local.dist;
                     hit.position = ray.origin + hit.dist * ray.direction;
-                    hit.normal = normalize(mat3(instance.local_to_world) * hit_local.normal);
+                    hit.normal = transpose(mat3(instance.world_to_local)) * hit_local.normal;
                     hit.tangent = vec4f(mat3(instance.local_to_world) * hit_local.tangent.xyz, hit_local.tangent.w);
                     hit.texcoord = hit_local.texcoord;
                     hit.color = instance.color;
@@ -233,7 +238,7 @@ fn intersect_BLAS(ray: Ray, index_top: u32) -> HitInfo {
                     hit.dist = t.x;
                     let barycentrics = vec3f(1.0 - t.y - t.z, t.yz);
                     hit.position = ray.origin + hit.dist * ray.direction;
-                    hit.normal = normalize(mat3x3f(v0.normal, v1.normal, v2.normal) * barycentrics);
+                    hit.normal = mat3x3f(v0.normal, v1.normal, v2.normal) * barycentrics;
                     // TODO: Benchmark?
                     // hit.texcoord = barycentrics * mat2x3f(vec3f(v0.u, v1.u, v2.u), vec3f(v0.v, v1.v, v2.v)); // 16.7 44.7
                     hit.texcoord = mat3x2f(vec2f(v0.u, v0.v), vec2f(v1.u, v1.v), vec2f(v2.u, v2.v)) * barycentrics; // 16.4 44.3

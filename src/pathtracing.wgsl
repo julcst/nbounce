@@ -44,30 +44,35 @@ fn mat3(m: mat4x4f) -> mat3x3f {
 /// Sample visible normal distribution function using the algorithm
 /// from "Sampling Visible GGX Normals with Spherical Caps" by Dupuy et al. 2023.
 /// https://cdrdv2-public.intel.com/782052/sampling-visible-ggx-normals.pdf
+/// Implementation from https://gist.github.com/jdupuy/4c6e782b62c92b9cb3d13fbb0a5bd7a0
 fn sample_vndf(rand: vec2f, wi: vec3f, alpha: vec2f) -> vec3f {
-    // warp to the hemisphere configuration
+    // Warp to the hemisphere configuration
     let wiStd = normalize(vec3f(wi.xy * alpha, wi.z));
-    // sample a spherical cap in (-wi.z, 1]
+    // Sample a spherical cap in (-wi.z, 1]
     let phi = TWO_PI * rand.x;
     let z = fma((1.0 - rand.y), (1.0 + wiStd.z), -wiStd.z);
     let sinTheta = sqrt(clamp(1.0 - z * z, 0.0, 1.0));
     let x = sinTheta * cos(phi);
     let y = sinTheta * sin(phi);
-    // compute halfway direction as standard normal
+    // Compute halfway direction as standard normal
     let wmStd = vec3(x, y, z) + wiStd;
-    // warp back to the ellipsoid configuration
+    // Warp back to the ellipsoid configuration
     let wm = normalize(vec3f(wmStd.xy * alpha, wmStd.z));
-    // return final normal
+    // Return final normal
     return wm;
 }
 
+/// Sample visible normal distribution function using the algorithm
+/// from "Sampling Visible GGX Normals with Spherical Caps" by Dupuy et al. 2023.
+/// https://cdrdv2-public.intel.com/782052/sampling-visible-ggx-normals.pdf
+/// Implementation from https://gist.github.com/jdupuy/4c6e782b62c92b9cb3d13fbb0a5bd7a0
 fn sample_vndf_iso(rand: vec2f, wi: vec3f, alpha: f32, n: vec3f) -> vec3f {
-    // decompose the vector in parallel and perpendicular components
+    // Decompose the vector in parallel and perpendicular components
     let wi_z = n * dot(wi, n);
     let wi_xy = wi - wi_z;
-    // warp to the hemisphere configuration
+    // Warp to the hemisphere configuration
     let wiStd = normalize(wi_z - alpha * wi_xy);
-    // sample a spherical cap in (-wiStd.z, 1]
+    // Sample a spherical cap in (-wiStd.z, 1]
     let wiStd_z = dot(wiStd, n);
     let phi = (2.0 * rand.x - 1.0) * PI;
     let z = (1.0 - rand.y) * (1.0 + wiStd_z) - wiStd_z;
@@ -75,18 +80,19 @@ fn sample_vndf_iso(rand: vec2f, wi: vec3f, alpha: f32, n: vec3f) -> vec3f {
     let x = sinTheta * cos(phi);
     let y = sinTheta * sin(phi);
     let cStd = vec3(x, y, z);
-    // reflect sample to align with normal
+    // Reflect sample to align with normal
     let up = vec3f(0, 0, 1);
     var wr = n + up;
-    if wr.z == 0.0 { wr.z = 0.0000001; } // TODO: Find better solution
+    // Prevent division by zero
+    if wr.z == 0.0 { wr.z = 0.0000001; } // TODO: Find better solution for this
     let c = dot(wr, cStd) * wr / wr.z - cStd;
-    // compute halfway direction as standard normal
+    // Compute halfway direction as standard normal
     let wmStd = c + wiStd;
     let wmStd_z = n * dot(n, wmStd);
     let wmStd_xy = wmStd_z - wmStd;
-    // warp back to the ellipsoid configuration
+    // Warp back to the ellipsoid configuration
     let wm = normalize(wmStd_z + alpha * wmStd_xy);
-    // return final normal
+    // Return final normal
     return wm;
 }
 
@@ -189,28 +195,28 @@ fn sample_sobol_burley_extra(i: u32, shift: vec4f) -> vec4f {
     return fract(sample + shift);
 }
 
-// TODO: Use Owen-Scrambled-Sobol
 fn sample_rendering_eq(sample: u32, shift: vec4f, dir: Ray) -> vec3f {
     var throughput = vec3f(1.0);
     var ray = dir;
     for (var bounce = 0u; bounce <= c.bounces; bounce += 1u) {
         let sobol_0 = sample_sobol_burley_bounce(sample, bounce, shift, 0u);
         let hit = intersect_TLAS(ray);
+
         // TODO: Multiple Importance Sampling?
         if (hit.flags & EMISSIVE) != 0u {
             return throughput * hit.color.xyz;
         }
         let alpha = hit.roughness * hit.roughness;
         let alpha2 = alpha * alpha;
+        let N = normalize(hit.normal);
         let wo = normalize(-ray.direction);
-        let wm = sample_vndf_iso(sobol_0.xy, wo, alpha, hit.normal); // Sample microfacet normal after Trowbridge-Reitz VNDF
+        let wm = sample_vndf_iso(sobol_0.xy, wo, alpha, N); // Sample microfacet normal after Trowbridge-Reitz VNDF
         var wi = reflect(-wo, wm);
         let cosThetaD = dot(wo, wm); // = dot(wi, wm)
-        let cosThetaI = dot(wi, hit.normal);
-        let cosThetaO = dot(wo, hit.normal);
+        let cosThetaI = dot(wi, N);
+        let cosThetaO = dot(wo, N);
         // TODO: Importance Sample
         if sobol_0.z < 0.5 { // Trowbridge-Reitz-Specular
-            // FIXME: Artifacts on the blue suzanne head, maybe because of rotation
             let F0 = mix(vec3f(0.04), hit.color.xyz, hit.metallic);
             let F = F_SchlickApprox(cosThetaD, F0);
             let LambdaL = Lambda_TrowbridgeReitz(cosThetaI, alpha2);
@@ -226,6 +232,7 @@ fn sample_rendering_eq(sample: u32, shift: vec4f, dir: Ray) -> vec3f {
             throughput *= diffuse * 2.0;
         }
         
+        // TODO: Debug negative throughput
         if luminance(throughput) <= c.throughput { break; }
         ray = Ray(hit.position, wi, 1.0 / wi);
     }
@@ -244,6 +251,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
         color = textureLoad(output, vec2i(id.xy));
     }
 
+    // TODO: Read from texture
     let shift = map4f(hash4u(vec4u(id.xyzx)));
 
     let jitter = sample_sobol_burley_extra(c.sample, shift);
@@ -255,7 +263,6 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     textureStore(output, id.xy, color);
 
     // let hit = intersect_TLAS(ray);
-    // textureStore(output, id.xy, vec4f(hash2f(id.xy), 0.0, 1.0));
     // textureStore(output, id.xy, vec4f(f32(hit.n_aabb) * 0.02, select(0.0, 1.0, hit.dist != NO_HIT), f32(hit.n_tri) * 0.2, 1.0));
     // textureStore(output, id.xy, hit.color);
     // textureStore(output, id.xy, vec4f(vec3f(hit.roughness), 1.0));
