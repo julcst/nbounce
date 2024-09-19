@@ -5,7 +5,7 @@ This is a GPU-accelerated path tracer, fully written in Rust using `wgpu`, devel
 Thanks to `wgpu`, this implementation is fully cross-platform, supporting Metal on macOS and Vulkan on Windows and Linux. However, due to the advanced GPU features required—some of which are not yet exposed by WebGPU—this will not natively run in the browser via WebAssembly (WASM). Future additions to the WebGPU standard might change this limitation.
 
 ## Planned Features
-- [X] Software ray tracing using SAH-optimized BVH trees and Müller-Trombore intersection tests
+- [X] Software ray tracing using SAH-optimized BVH trees and Möller-Trumbore intersection tests
 - [ ] Hardware-accelerated ray tracing
 - [X] Random Quasi-Monte Carlo sampling with a precomputed Owen-scrambled Sobol sequence and per-pixel random Cranley-Patterson rotations
 - [ ] Neural Radiance Caching
@@ -28,3 +28,4 @@ Thanks to `wgpu`, this implementation is fully cross-platform, supporting Metal 
 - [ ] Depth of field
 - [ ] Tensor core utilization
 - [ ] Volumetrics
+- [ ] Numerically robust triangle intersection tests
