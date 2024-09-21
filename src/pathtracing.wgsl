@@ -181,8 +181,8 @@ fn build_tbn(hit: HitInfo) -> mat3x3f {
 const LDS_PER_BOUNCE: u32 = 2u;
 
 /// Takes a precomputed Sobol-Burley sample and performs a Cranly-Patterson-Rotation with a per pixel shift.
-/// For each sample the precomputed Sobol-Burley array contains first two vec4f for each bounce an then
-/// one vec4f for lens and pixel sampling.
+/// For each sample the precomputed Sobol-Burley array contains first one vec4f for lens and pixel sampling 
+/// and then two vec4f for each bounce.
 fn sample_sobol_burley_bounce(i: u32, bounce: u32, shift: vec4f, dim: u32) -> vec4f {
     let lds_stride = c.bounces * LDS_PER_BOUNCE + 1u;
     let sample = sobol_burley[i * lds_stride + 1u + bounce * LDS_PER_BOUNCE + dim];
@@ -199,9 +199,14 @@ fn sample_rendering_eq(sample: u32, shift: vec4f, dir: Ray) -> vec3f {
     var throughput = vec3f(1.0);
     var ray = dir;
     for (var bounce = 0u; bounce <= c.bounces; bounce += 1u) {
-        let hit = intersect_TLAS(ray);
+        let hit = intersect_scene(ray);
 
         // TODO: Multiple Importance Sampling?
+        if (hit.dist == NO_HIT) {
+            let env_color = textureSampleLevel(environment, environment_sampler, ray.direction, 0.0).xyz;
+            return throughput * env_color;
+        }
+
         if (hit.flags & EMISSIVE) != 0u {
             return throughput * hit.color.xyz;
         }
@@ -266,7 +271,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     }
 
     // TODO: Read from texture
-    let shift = map4f(hash4u(vec4u(id.xyzx)));
+    let shift = map4f(hash4u(id.xyzx));
 
     let jitter = sample_sobol_burley_extra(c.sample, shift);
     let ray = generate_ray(id, jitter.xy);

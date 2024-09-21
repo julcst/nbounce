@@ -2,7 +2,8 @@ const MAX_FLOAT: f32 = 0x1.fffffep+127f;
 const NO_HIT: f32 = MAX_FLOAT;
 const EPS: f32 = 0.00000001;
 const BIAS: f32 = 0.1;
-const STACK_SIZE = 32u;
+const TLAS_STACK_SIZE = 32u;
+const BLAS_STACK_SIZE = 32u;
 
 struct BVHNode {
     min: vec3f,
@@ -112,17 +113,72 @@ fn no_hit_info() -> HitInfo {
     return HitInfo(vec3f(0.0), NO_HIT, vec3f(0.0), 0u, vec2f(0.0), 0u, 0.0, vec4f(0.0), vec4f(0.0), 0.0, 0u);
 }
 
+struct RawHit {
+    instance: u32,
+    i0: u32,
+    i1: u32,
+    i2: u32,
+    barycentrics: vec3f,
+    dist: f32,
+    n_aabb: u32,
+    n_tri: u32,
+};
+
+fn no_raw_hit() -> RawHit {
+    var raw_hit: RawHit;
+    raw_hit.dist = NO_HIT;
+    raw_hit.n_aabb = 0u;
+    raw_hit.n_tri = 0u;
+    return raw_hit;
+}
+
 struct StackEntry {
     index: u32,
     dist: f32,
 };
 
-// TODO: Implement HW raytracing
-// TODO: Refactor in sperate file
-fn intersect_TLAS(ray: Ray) -> HitInfo {
-    var stack: array<StackEntry, STACK_SIZE>;
+fn intersect_scene(ray: Ray) -> HitInfo {
+    let hit = intersect_TLAS(ray);
 
-    var hit = no_hit_info();
+    var info: HitInfo;
+    info.dist = hit.dist;
+
+    if (info.dist == NO_HIT) { return info; }
+
+    let instance = instances[hit.instance];
+    
+    info.position = ray.origin + hit.dist * ray.direction;
+
+    let v0 = vertices[hit.i0];
+    let v1 = vertices[hit.i1];
+    let v2 = vertices[hit.i2];
+                    
+    let local_normal = mat3x3f(v0.normal, v1.normal, v2.normal) * hit.barycentrics;
+    let local_tangent = mat3x4f(v0.tangent, v1.tangent, v2.tangent) * hit.barycentrics;
+
+    info.normal = transpose(mat3(instance.world_to_local)) * local_normal;
+    info.tangent = vec4f(mat3(instance.local_to_world) * local_tangent.xyz, local_tangent.w);
+    
+    // TODO: Benchmark?
+    // info.texcoord = hit.barycentrics * mat2x3f(vec3f(v0.u, v1.u, v2.u), vec3f(v0.v, v1.v, v2.v)); // 16.7 44.7
+    info.texcoord = mat3x2f(vec2f(v0.u, v0.v), vec2f(v1.u, v1.v), vec2f(v2.u, v2.v)) * hit.barycentrics; // 16.4 44.3
+
+    info.color = instance.color;
+    info.roughness = instance.roughness;
+    info.metallic = instance.metallic;
+    info.flags = 0u;
+    if instance.emissive > 0.0 {
+        info.flags |= EMISSIVE;
+    }
+
+    return info;
+};
+
+// TODO: Implement HW raytracing
+fn intersect_TLAS(ray: Ray) -> RawHit {
+    var stack: array<StackEntry, TLAS_STACK_SIZE>;
+
+    var hit = no_raw_hit();
 
     // Init stack with top node
     var i = 0u;
@@ -153,16 +209,11 @@ fn intersect_TLAS(ray: Ray) -> HitInfo {
                 hit.n_tri += hit_local.n_tri;
                 if hit_local.dist < hit.dist {
                     hit.dist = hit_local.dist;
-                    hit.position = ray.origin + hit.dist * ray.direction;
-                    hit.normal = transpose(mat3(instance.world_to_local)) * hit_local.normal;
-                    hit.tangent = vec4f(mat3(instance.local_to_world) * hit_local.tangent.xyz, hit_local.tangent.w);
-                    hit.texcoord = hit_local.texcoord;
-                    hit.color = instance.color;
-                    hit.roughness = instance.roughness;
-                    hit.metallic = instance.metallic;
-                    if instance.emissive > 0.0 {
-                        hit.flags |= EMISSIVE;
-                    }
+                    hit.instance = j;
+                    hit.i0 = hit_local.i0;
+                    hit.i1 = hit_local.i1;
+                    hit.i2 = hit_local.i2;
+                    hit.barycentrics = hit_local.barycentrics;
                 }
             }
         } else {
@@ -196,18 +247,13 @@ fn intersect_TLAS(ray: Ray) -> HitInfo {
             }
         }
     }
-    if hit.dist == NO_HIT {
-        // TODO: Use pre-filtered mipmaps
-        hit.color = textureSampleLevel(environment, environment_sampler, ray.direction, 0.0);
-        hit.flags |= EMISSIVE;
-    }
     return hit;
 }
 
-fn intersect_BLAS(ray: Ray, index_top: u32) -> HitInfo {
-    var stack: array<StackEntry, STACK_SIZE>;
+fn intersect_BLAS(ray: Ray, index_top: u32) -> RawHit {
+    var stack: array<StackEntry, BLAS_STACK_SIZE>;
 
-    var hit = no_hit_info();
+    var hit = no_raw_hit();
 
     // Init stack with top node
     var i = 0u;
@@ -228,21 +274,15 @@ fn intersect_BLAS(ray: Ray, index_top: u32) -> HitInfo {
         let is_leaf = node.end > 0u;
         if is_leaf { // Leaf node
             for (var j = node.start * 3u; j < node.end * 3u; j += 3u) {
-                let v0 = vertices[indices[j + 0u]];
-                let v1 = vertices[indices[j + 1u]];
-                let v2 = vertices[indices[j + 2u]];
+                let i0 = indices[j + 0u]; let v0 = vertices[i0];
+                let i1 = indices[j + 1u]; let v1 = vertices[i1];
+                let i2 = indices[j + 2u]; let v2 = vertices[i2];
                 let t = intersect_triangle(ray, v0.position, v1.position, v2.position);
                 hit.n_tri += 1u;
-                // FIXME: This does interpolation for multiple triangles but it is only necessary for nearest
                 if t.x < hit.dist {
                     hit.dist = t.x;
-                    let barycentrics = vec3f(1.0 - t.y - t.z, t.yz);
-                    hit.position = ray.origin + hit.dist * ray.direction;
-                    hit.normal = mat3x3f(v0.normal, v1.normal, v2.normal) * barycentrics;
-                    // TODO: Benchmark?
-                    // hit.texcoord = barycentrics * mat2x3f(vec3f(v0.u, v1.u, v2.u), vec3f(v0.v, v1.v, v2.v)); // 16.7 44.7
-                    hit.texcoord = mat3x2f(vec2f(v0.u, v0.v), vec2f(v1.u, v1.v), vec2f(v2.u, v2.v)) * barycentrics; // 16.4 44.3
-                    hit.tangent = mat3x4f(v0.tangent, v1.tangent, v2.tangent) * barycentrics;
+                    hit.barycentrics = vec3f(1.0 - t.y - t.z, t.yz);
+                    hit.i0 = i0; hit.i1 = i1; hit.i2 = i2;
                 }
             }
         } else {
