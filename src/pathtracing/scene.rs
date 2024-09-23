@@ -134,17 +134,17 @@ impl Scene {
         let mut geometry_map = HashMap::new();
 
         for mesh in gltf.meshes() {
-            log::info!("Processing {:?} primitives in mesh {:?}", mesh.primitives().len(), mesh.name());
+            log::debug!("Processing {:?} primitives in mesh {:?}", mesh.primitives().len(), mesh.name());
             for primitive in mesh.primitives() {
                 // if let texture = primitive.material().pbr_metallic_roughness().base_color_texture() {
                 //     let texture = Texture::from_gltf(image, &images, &WGPUContext::new());
                 // }
-                // log::info!("{:#?}", primitive.material().pbr_metallic_roughness().base_color_texture().unwrap().texture().source().index());
+                // log::debug!("{:#?}", primitive.material().pbr_metallic_roughness().base_color_texture().unwrap().texture().source().index());
                 if primitive.mode() != gltf::mesh::Mode::Triangles {
                     return Err(MeshError::NotTriangleList);
                 }
                 
-                log::info!("{:?}", primitive.bounding_box());
+                log::debug!("{:?}", primitive.bounding_box());
                 let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
                 let positions = reader.read_positions().ok_or(MeshError::MissingPositions)?;
@@ -180,7 +180,7 @@ impl Scene {
             }
         }
 
-        //log::info!("Primitives: {:#?}", geometry_map);
+        //log::debug!("Primitives: {:#?}", geometry_map);
         
         for node in gltf.nodes() {
             if let Some(mesh) = node.mesh() {
@@ -210,7 +210,7 @@ impl Scene {
             }
         }
 
-        log::info!("Scene: {:#?}", self.primitives);
+        log::debug!("Scene: {:#?}", self.primitives);
 
         log::info!("Processed {:?} in {:?}", path, time.elapsed());
         Ok(())

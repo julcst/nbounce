@@ -90,6 +90,7 @@ impl App for MainApp {
         }
         self.wgpu.resize(new_size);
         self.depth_texture = Texture::create_depth(&self.wgpu);
+        self.pathtracer.resize(&self.wgpu);
         self.pathtracer.update(&self.wgpu, &self.camera, &self.envmap);
         self.fullscreen_renderer.set_texture(&self.wgpu, self.pathtracer.output_texture());
     }
@@ -133,17 +134,28 @@ impl App for MainApp {
                 if updated { self.pathtracer.invalidate(); }
                 if ui.combo("Scene", &mut self.scene_index, &self.scenes, |x| x.to_string_lossy()) {
                     let mut scene_data = Scene::default();
-                    let _ = scene_data.parse_gltf(&self.scenes[self.scene_index]).map_err(|e| {
-                        self.err_msg = e.to_string();
-                        ui.open_popup("Error");
-                    });
-                    self.scene = SceneBuffers::from_scene(&self.wgpu, &mut scene_data);
-                    self.pathtracer.invalidate();
+                    match scene_data.parse_gltf(&self.scenes[self.scene_index]) {
+                        Ok(_) => {
+                            self.scene = SceneBuffers::from_scene(&self.wgpu, &mut scene_data);
+                            self.pathtracer.invalidate();
+                        },
+                        Err(e) => {
+                            self.err_msg = e.to_string();
+                            ui.open_popup("Error");
+                        }
+                    }
                 }
                 if ui.combo("Environment", &mut self.envmap_index, &self.envmaps, |x| x.to_string_lossy()) {
-                    self.envmap = EnvMap::load(&self.wgpu, &self.envmaps[self.envmap_index]).expect("Failed to load environment map");
-                    self.pathtracer.update(&self.wgpu, &self.camera, &self.envmap);
-                    self.fullscreen_renderer.set_texture(&self.wgpu, self.pathtracer.output_texture());
+                    match EnvMap::load(&self.wgpu, &self.envmaps[self.envmap_index]) {
+                        Ok(envmap) => {
+                            self.envmap = envmap;
+                            self.pathtracer.update(&self.wgpu, &self.camera, &self.envmap);
+                        },
+                        Err(e) => {
+                            self.err_msg = e.to_string();
+                            ui.open_popup("Error");
+                        }
+                    }
                 }
                 ui.modal_popup_config("Error").build(|| {
                     ui.text(self.err_msg.clone());

@@ -1,2 +1,2 @@
 [env]
-RUST_LOG = "warn, pathtracer"
+RUST_LOG = "warn, nbounce=info"

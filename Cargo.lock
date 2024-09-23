@@ -1140,6 +1140,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "nbounce"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "ddsfile",
+ "env_logger 0.11.5",
+ "glam",
+ "gltf",
+ "imgui",
+ "imgui-wgpu",
+ "imgui-winit-support",
+ "itertools",
+ "log",
+ "pollster",
+ "pretty_env_logger",
+ "sobol_burley",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
 name = "ndk"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1472,27 +1493,6 @@ name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
-
-[[package]]
-name = "pathtracer"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "ddsfile",
- "env_logger 0.11.5",
- "glam",
- "gltf",
- "imgui",
- "imgui-wgpu",
- "imgui-winit-support",
- "itertools",
- "log",
- "pollster",
- "pretty_env_logger",
- "sobol_burley",
- "wgpu",
- "winit",
-]
 
 [[package]]
 name = "percent-encoding"

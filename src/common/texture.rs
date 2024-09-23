@@ -94,7 +94,7 @@ impl Texture {
         };
         // Force the array size to 6, because the DDS loader doesn't set it correctly
         image.header10.as_mut().unwrap().array_size = 6;
-        log::info!("Cubemap Info: {:#?}", image);
+        log::debug!("Cubemap Info: {:#?}", image);
 
         let size = wgpu::Extent3d {
             width: image.get_width(),

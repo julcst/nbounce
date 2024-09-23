@@ -1,5 +1,5 @@
 [package]
-name = "pathtracer"
+name = "nbounce"
 version = "0.1.0"
 authors = ["Julian C. Stamm <mail@julcs.com>"]
 edition = "2021"

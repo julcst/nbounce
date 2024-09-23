@@ -209,9 +209,11 @@ impl Pathtracer {
         &self.output
     }
 
-    pub fn update(&mut self, wgpu: &WGPUContext, camera: &CameraController, envmap: &EnvMap) {
+    pub fn resize(&mut self, wgpu: &WGPUContext) {
         self.output = Self::create_output_texture(wgpu, self.resolution_factor);
+    }
 
+    pub fn update(&mut self, wgpu: &WGPUContext, camera: &CameraController, envmap: &EnvMap) {
         self.global_group = Self::create_global_group(wgpu, &self.global_layout, &self.output, camera, &self.lds_buffer, envmap);
 
         self.invalidate();

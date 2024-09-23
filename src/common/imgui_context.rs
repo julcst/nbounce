@@ -22,7 +22,7 @@ impl ImGuiContext {
         );
         ctx.set_ini_filename(None);
 
-        let font_size = (13.0 * hidpi_factor) as f32;
+        let font_size = (9.0 * hidpi_factor) as f32;
         ctx.io_mut().font_global_scale = (1.0 / hidpi_factor) as f32;
 
         ctx.fonts().add_font(&[imgui::FontSource::DefaultFontData {
