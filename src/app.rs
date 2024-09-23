@@ -3,13 +3,14 @@ use std::sync::Arc;
 
 use winit::window::Window;
 
-use crate::envmap::EnvMap;
-use crate::scene::{Scene, SceneBuffers};
+use crate::common::util::search_files;
 use crate::common::{App, CameraController, ImGuiContext, PerformanceMetrics, Texture, WGPUContext};
 
-use crate::blit_renderer::BlitRenderer;
-use crate::mesh_renderer::MeshRenderer;
-use crate::pathtracer::Pathtracer;
+use crate::pathtracing::envmap::EnvMap;
+use crate::pathtracing::scene::{Scene, SceneBuffers};
+use crate::pathtracing::blit_renderer::BlitRenderer;
+use crate::pathtracing::mesh_renderer::MeshRenderer;
+use crate::pathtracing::pathtracer::Pathtracer;
 
 #[allow(dead_code)]
 pub struct MainApp {
@@ -31,16 +32,6 @@ pub struct MainApp {
     envmaps: Vec<PathBuf>,
     envmap_index: usize,
     err_msg: String,
-}
-
-fn search_files(path: &str, ext: &str) -> Result<Vec<PathBuf>, std::io::Error> {
-    let mut files = std::fs::read_dir(path)?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|f| f.extension().map_or(false, |x| x == ext))
-        .collect::<Vec<_>>();
-    files.sort();
-    Ok(files)
 }
 
 // TODO: Cleanup

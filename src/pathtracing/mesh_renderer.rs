@@ -1,5 +1,5 @@
 use crate::common::{CameraController, WGPUContext};
-use crate::scene::{SceneBuffers, Vertex};
+use super::scene::{SceneBuffers, Vertex};
 
 pub struct MeshRenderer {
     pipeline: wgpu::RenderPipeline,

@@ -5,7 +5,7 @@ use glam::{Mat4, Vec3, Vec4};
 use itertools::izip;
 use wgpu::util::DeviceExt;
 
-use crate::bvh::{self, BVHPrimitive, BVHTree};
+use super::bvh::{self, BVHPrimitive, BVHTree};
 
 use crate::common::WGPUContext;
 

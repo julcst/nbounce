@@ -8,8 +8,8 @@ use wgpu::util::DeviceExt;
 use wgpu::{PushConstantRange, ShaderModuleDescriptor};
 
 use crate::common::{CameraController, Texture, WGPUContext};
-use crate::envmap::EnvMap;
-use crate::scene::SceneBuffers;
+use super::envmap::EnvMap;
+use super::scene::SceneBuffers;
 
 pub struct Pathtracer {
     pipeline: wgpu::ComputePipeline,
@@ -136,7 +136,7 @@ impl Pathtracer {
         // TODO: Refactor into macro
         let module = wgpu.device.create_shader_module(ShaderModuleDescriptor {
             label: Some("Pathtracing Shader"),
-            source: wgpu::ShaderSource::Wgsl((include_str!("pathtracing.wgsl").to_owned() + include_str!("swraytracing.wgsl")).into()),
+            source: wgpu::ShaderSource::Wgsl((include_str!("pathtracing.wgsl").to_owned() + include_str!("raytracing_sw.wgsl")).into()),
         });
 
         let pipeline = wgpu.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {

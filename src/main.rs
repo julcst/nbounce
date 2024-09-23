@@ -1,11 +1,6 @@
 mod app;
 mod common;
-mod blit_renderer;
-mod mesh_renderer;
-mod pathtracer;
-mod bvh;
-mod scene;
-mod envmap;
+mod pathtracing;
 
 use app::MainApp;
 use winit::event_loop::{ControlFlow, EventLoop};

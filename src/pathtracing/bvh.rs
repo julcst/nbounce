@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use glam::{UVec3, Vec3};
 
-use crate::scene::Vertex;
+use super::scene::Vertex;
 
 pub trait BVHPrimitive {
     fn min(&self) -> Vec3;

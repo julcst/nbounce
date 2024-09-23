@@ -4,6 +4,7 @@ pub mod performance_metric;
 pub mod wgpu_context;
 pub mod camera;
 pub mod texture;
+pub mod util;
 
 pub use app_handler::{App, AppHandler};
 pub use imgui_context::ImGuiContext;
