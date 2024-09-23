@@ -11,13 +11,15 @@ Thanks to `wgpu`, this implementation is fully cross-platform, supporting Metal 
 - [ ] Russian Roulette early termination
 - [ ] Neural Radiance Caching
 - [X] Support for environment lighting and emissive materials
-- [ ] Multiple Importance Sampling (MIS)
 - [ ] Texture and normal map support
-- [X] GLTF parsing (requires precomputed tangents, texture coordinates, and normals)
+- [X] GLTF parsing (requires precomputed tangents and normals)
 - [ ] Support for transmissive materials
 - [X] Basic Disney BRDF: Burley Diffuse + Trowbridge-Reitz Specular PBR materials
 - [X] Importance sampling of the Visible Normal Distribution Function (VNDF)
+- [ ] Importance sampling of environment maps
 - [X] HDR output on macOS
+- [ ] Timer queries for detailed performance statistics
+- [ ] GPU-side neural networks using f16 matrix multiplication
 
 ## Features Not Planned (Yet)
 - [ ] MikkTSpace tangent generation
@@ -25,7 +27,7 @@ Thanks to `wgpu`, this implementation is fully cross-platform, supporting Metal 
 - [ ] Implicit light sources: Directional, spot, point
 - [ ] Animation support
 - [ ] Neural supersampling
-- [ ] Neural denoising
+- [ ] Neural denoising (OpenImageDenoise)
 - [ ] Depth of field
 - [ ] Tensor core utilization
 - [ ] Volumetrics

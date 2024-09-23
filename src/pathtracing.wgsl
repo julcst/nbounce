@@ -10,6 +10,8 @@ struct CameraData {
 @group(0) @binding(0) var output: texture_storage_2d<rgba32float, read_write>;
 @group(0) @binding(1) var<uniform> camera: CameraData;
 @group(0) @binding(2) var<storage, read> sobol_burley: array<vec4f>;
+@group(0) @binding(3) var environment: texture_cube<f32>;
+@group(0) @binding(4) var environment_sampler: sampler;
 
 struct PushConstants {
     sample: u32,
@@ -67,6 +69,8 @@ fn sample_vndf(rand: vec2f, wi: vec3f, alpha: vec2f) -> vec3f {
 /// https://cdrdv2-public.intel.com/782052/sampling-visible-ggx-normals.pdf
 /// Implementation from https://gist.github.com/jdupuy/4c6e782b62c92b9cb3d13fbb0a5bd7a0
 fn sample_vndf_iso(rand: vec2f, wi: vec3f, alpha: f32, n: vec3f) -> vec3f {
+    // Note: Else produces NaN for alpha = 0
+    if alpha == 0.0 { return n; }
     // Decompose the vector in parallel and perpendicular components
     let wi_z = n * dot(wi, n);
     let wi_xy = wi - wi_z;
@@ -184,6 +188,7 @@ const LDS_PER_BOUNCE: u32 = 2u;
 /// For each sample the precomputed Sobol-Burley array contains first one vec4f for lens and pixel sampling 
 /// and then two vec4f for each bounce.
 fn sample_sobol_burley_bounce(i: u32, bounce: u32, shift: vec4f, dim: u32) -> vec4f {
+    // TODO: Move to a push constant
     let lds_stride = c.bounces * LDS_PER_BOUNCE + 1u;
     let sample = sobol_burley[i * lds_stride + 1u + bounce * LDS_PER_BOUNCE + dim];
     return fract(sample + shift);
@@ -201,8 +206,7 @@ fn sample_rendering_eq(sample: u32, shift: vec4f, dir: Ray) -> vec3f {
     for (var bounce = 0u; bounce <= c.bounces; bounce += 1u) {
         let hit = intersect_scene(ray);
 
-        // TODO: Multiple Importance Sampling?
-        if (hit.dist == NO_HIT) {
+        if hit.dist == NO_HIT {
             let env_color = textureSampleLevel(environment, environment_sampler, ray.direction, 0.0).xyz;
             return throughput * env_color;
         }
@@ -224,9 +228,10 @@ fn sample_rendering_eq(sample: u32, shift: vec4f, dir: Ray) -> vec3f {
         let cosThetaO = dot(wo, N);
         var wi: vec3f;
 
+        // TODO: Importance Sample environment map
         // TODO: Importance Sample
         if sobol_0.x < 0.5 { // Trowbridge-Reitz-Specular
-            let wm = sample_vndf_iso(sobol_0.yz, wo, alpha, N); // Sample microfacet normal after Trowbridge-Reitz VNDF
+            let wm = sample_vndf_iso(sobol_0.yz, wo, alpha, N); // Sample microfacet normal after Trowbridge-Reitz VNDF // FIXME: NaNs
             wi = reflect(-wo, wm);
             let cosThetaD = dot(wo, wm); // = dot(wi, wm)
             let cosThetaI = dot(wi, N);
@@ -247,10 +252,10 @@ fn sample_rendering_eq(sample: u32, shift: vec4f, dir: Ray) -> vec3f {
             // Note: We drop the 1.0 / PI prefactor
             let diffuse = (1 - hit.metallic) * hit.color.xyz * response;
             throughput *= diffuse * 2.0;
-            // return vec3f(FD90);
         }
         
-        // TODO: Debug negative throughput
+        // TODO: Debug zero throughput as this is wasted computation
+        // if all(throughput <= vec3f(0)) { return vec3f(1,0,1); }
         // TODO: Do unbiased Russian Roulette
         if luminance(throughput) <= c.throughput { break; }
         ray = Ray(hit.position, wi, 1.0 / wi);
@@ -271,7 +276,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     }
 
     // TODO: Read from texture
-    let shift = map4f(hash4u(id.xyzx));
+    let shift = map4f(hash4u(vec4u(id.xyxy)));
 
     let jitter = sample_sobol_burley_extra(c.sample, shift);
     let ray = generate_ray(id, jitter.xy);

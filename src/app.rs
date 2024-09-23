@@ -1,8 +1,9 @@
-use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use winit::window::Window;
 
+use crate::envmap::EnvMap;
 use crate::scene::{Scene, SceneBuffers};
 use crate::common::{App, CameraController, ImGuiContext, PerformanceMetrics, Texture, WGPUContext};
 
@@ -19,28 +20,53 @@ pub struct MainApp {
 
     depth_texture: Texture,
     scene: SceneBuffers,
+    envmap: EnvMap,
     fullscreen_renderer: BlitRenderer,
     mesh_renderer: MeshRenderer,
-    raytracer: Pathtracer,
+    pathtracer: Pathtracer,
     camera: CameraController,
+
+    scenes: Vec<PathBuf>,
+    scene_index: usize,
+    envmaps: Vec<PathBuf>,
+    envmap_index: usize,
+    err_msg: String,
 }
 
+fn search_files(path: &str, ext: &str) -> Result<Vec<PathBuf>, std::io::Error> {
+    let mut files = std::fs::read_dir(path)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|f| f.extension().map_or(false, |x| x == ext))
+        .collect::<Vec<_>>();
+    files.sort();
+    Ok(files)
+}
+
+// TODO: Cleanup
 impl App for MainApp {
     async fn new(window: Arc<Window>) -> Self {
         let wgpu = WGPUContext::new(Arc::clone(&window)).await;
         let imgui = ImGuiContext::new(Arc::clone(&window), &wgpu);
         let metrics = PerformanceMetrics::default();
 
+        let scenes = search_files("assets", "glb").expect("Failed to search for scenes");
+        let scene_index = 0;
+        let envmaps = search_files("assets", "dds").expect("Failed to search for environment maps");
+        let envmap_index = 0;
+
         let mut scene_data = Scene::default();
-        scene_data.parse_gltf(Path::new("assets/testscene.glb")).unwrap();
+        scene_data.parse_gltf(&scenes[scene_index]).unwrap();
         let scene = SceneBuffers::from_scene(&wgpu, &mut scene_data);
 
         let camera = CameraController::new(&wgpu);
 
+        let envmap = EnvMap::load(&wgpu, &envmaps[envmap_index]).expect("Failed to load environment map");
+
         let mesh_renderer = MeshRenderer::new(&wgpu, &camera);
         let depth_texture = Texture::create_depth(&wgpu);
-        let raytracer = Pathtracer::new(&wgpu, &scene, &camera);
-        let fullscreen_renderer = BlitRenderer::new(&wgpu, raytracer.output_texture());
+        let pathtracer = Pathtracer::new(&wgpu, &scene, &camera, &envmap);
+        let fullscreen_renderer = BlitRenderer::new(&wgpu, pathtracer.output_texture());
 
         Self {
             wgpu,
@@ -49,10 +75,16 @@ impl App for MainApp {
             metrics,
             depth_texture,
             scene,
+            envmap,
             fullscreen_renderer,
             mesh_renderer,
             camera,
-            raytracer,
+            pathtracer,
+            scenes,
+            scene_index,
+            envmaps,
+            envmap_index,
+            err_msg: String::from("No Error"),
         }
     }
 
@@ -67,8 +99,8 @@ impl App for MainApp {
         }
         self.wgpu.resize(new_size);
         self.depth_texture = Texture::create_depth(&self.wgpu);
-        self.raytracer.update(&self.wgpu, &self.camera);
-        self.fullscreen_renderer.set_texture(&self.wgpu, self.raytracer.output_texture());
+        self.pathtracer.update(&self.wgpu, &self.camera, &self.envmap);
+        self.fullscreen_renderer.set_texture(&self.wgpu, self.pathtracer.output_texture());
     }
 
     fn update(&mut self) {
@@ -99,19 +131,39 @@ impl App for MainApp {
             .size([1.0, 1.0], imgui::Condition::FirstUseEver)
             .always_auto_resize(true)
             .build(|| {
-                ui.text(format!("Sample {}/{}", self.raytracer.sample_count(), self.raytracer.max_sample_count));
-                if ui.slider("Res", 0.1, 1.0, &mut self.raytracer.resolution_factor) {
-                    self.raytracer.update(&self.wgpu, &self.camera);
-                    self.fullscreen_renderer.set_texture(&self.wgpu, self.raytracer.output_texture());
+                ui.text(format!("Sample {}/{}", self.pathtracer.sample_count(), self.pathtracer.max_sample_count));
+                if ui.slider("Res", 0.1, 1.0, &mut self.pathtracer.resolution_factor) {
+                    self.pathtracer.update(&self.wgpu, &self.camera, &self.envmap);
+                    self.fullscreen_renderer.set_texture(&self.wgpu, self.pathtracer.output_texture());
                 }
                 let mut updated = false;
-                updated |= ui.slider("Bounces", 0, 32, &mut self.raytracer.globals.bounces);
-                updated |= ui.slider("Throughput", 0.0, 1.0, &mut self.raytracer.globals.throughput);
-                if updated { self.raytracer.invalidate(); }
+                updated |= ui.slider("Bounces", 0, 32, &mut self.pathtracer.globals.bounces);
+                updated |= ui.slider("Throughput", 0.0, 1.0, &mut self.pathtracer.globals.throughput);
+                if updated { self.pathtracer.invalidate(); }
+                if ui.combo("Scene", &mut self.scene_index, &self.scenes, |x| x.to_string_lossy()) {
+                    let mut scene_data = Scene::default();
+                    let _ = scene_data.parse_gltf(&self.scenes[self.scene_index]).map_err(|e| {
+                        self.err_msg = e.to_string();
+                        ui.open_popup("Error");
+                    });
+                    self.scene = SceneBuffers::from_scene(&self.wgpu, &mut scene_data);
+                    self.pathtracer.invalidate();
+                }
+                if ui.combo("Environment", &mut self.envmap_index, &self.envmaps, |x| x.to_string_lossy()) {
+                    self.envmap = EnvMap::load(&self.wgpu, &self.envmaps[self.envmap_index]).expect("Failed to load environment map");
+                    self.pathtracer.update(&self.wgpu, &self.camera, &self.envmap);
+                    self.fullscreen_renderer.set_texture(&self.wgpu, self.pathtracer.output_texture());
+                }
+                ui.modal_popup_config("Error").build(|| {
+                    ui.text(self.err_msg.clone());
+                    if ui.button("Close") {
+                        ui.close_current_popup();
+                    }
+                });
         });
 
         if self.camera.update(&self.wgpu) {
-            self.raytracer.invalidate();
+            self.pathtracer.invalidate();
         }
     }
 
@@ -125,7 +177,7 @@ impl App for MainApp {
             label: Some("Render Encoder"),
         });
 
-        self.raytracer.dispatch(&mut encoder, &self.scene);
+        self.pathtracer.dispatch(&mut encoder, &self.scene);
 
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

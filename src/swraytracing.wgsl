@@ -35,8 +35,6 @@ struct Vertex {
 @group(1) @binding(2) var<storage, read> instances: array<Instance>;
 @group(1) @binding(3) var<storage, read> vertices: array<Vertex>;
 @group(1) @binding(4) var<storage, read> indices: array<u32>;
-@group(1) @binding(5) var environment: texture_cube<f32>;
-@group(1) @binding(6) var environment_sampler: sampler;
 
 struct Ray {
     origin: vec3f,
@@ -143,7 +141,7 @@ fn intersect_scene(ray: Ray) -> HitInfo {
     var info: HitInfo;
     info.dist = hit.dist;
 
-    if (info.dist == NO_HIT) { return info; }
+    if info.dist == NO_HIT { return info; }
 
     let instance = instances[hit.instance];
     
@@ -183,6 +181,7 @@ fn intersect_TLAS(ray: Ray) -> RawHit {
     // Init stack with top node
     var i = 0u;
     let index_top = 0u;
+    if index_top >= arrayLength(&tlas) { return hit; }
     let top = tlas[index_top];
     let dist_top = intersect_AABB(ray, AABB(top.min, top.max));
     hit.n_aabb += 1u;

@@ -8,6 +8,7 @@ use wgpu::util::DeviceExt;
 use wgpu::{PushConstantRange, ShaderModuleDescriptor};
 
 use crate::common::{CameraController, Texture, WGPUContext};
+use crate::envmap::EnvMap;
 use crate::scene::SceneBuffers;
 
 pub struct Pathtracer {
@@ -41,11 +42,12 @@ impl Default for Globals {
     }
 }
 
+// TODO: Cleanup
 impl Pathtracer {
     const COMPUTE_SIZE: u32 = 8;
     const LDS_PER_BOUNCE: u32 = 2;
 
-    pub fn new(wgpu: &WGPUContext, scene: &SceneBuffers, camera: &CameraController) -> Self {
+    pub fn new(wgpu: &WGPUContext, scene: &SceneBuffers, camera: &CameraController, envmap: &EnvMap) -> Self {
         let resolution_factor = 0.3;
         let output = Self::create_output_texture(wgpu, resolution_factor);
 
@@ -100,10 +102,26 @@ impl Pathtracer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::Cube,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ]
         });
 
-        let global_group = Self::create_global_group(wgpu, &global_layout, &output, camera, &lds_buffer);
+        let global_group = Self::create_global_group(wgpu, &global_layout, &output, camera, &lds_buffer, envmap);
 
         let layout = wgpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Raytracer Pipeline Layout"),
@@ -127,9 +145,7 @@ impl Pathtracer {
             module: &module,
             entry_point: "main",
             compilation_options: wgpu::PipelineCompilationOptions {
-                constants: &HashMap::from([
-                    // (String::from("COMPUTE_SIZE"), Self::COMPUTE_SIZE as f64)
-                ]),
+                constants: &HashMap::new(),
                 zero_initialize_workgroup_memory: false,
                 vertex_pulling_transform: false,
             },
@@ -148,7 +164,7 @@ impl Pathtracer {
         }
     }
 
-    fn create_global_group(wgpu: &WGPUContext, global_layout: &wgpu::BindGroupLayout, output: &Texture, camera: &CameraController, lds_buffer: &wgpu::Buffer) -> wgpu::BindGroup {
+    fn create_global_group(wgpu: &WGPUContext, global_layout: &wgpu::BindGroupLayout, output: &Texture, camera: &CameraController, lds_buffer: &wgpu::Buffer, envmap: &EnvMap) -> wgpu::BindGroup {
         wgpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Raytracer Output Bind Group"),
             layout: global_layout,
@@ -164,6 +180,14 @@ impl Pathtracer {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: lds_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(envmap.view()),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(envmap.sampler()),
                 },
             ]
         })
@@ -185,10 +209,10 @@ impl Pathtracer {
         &self.output
     }
 
-    pub fn update(&mut self, wgpu: &WGPUContext, camera: &CameraController) {
+    pub fn update(&mut self, wgpu: &WGPUContext, camera: &CameraController, envmap: &EnvMap) {
         self.output = Self::create_output_texture(wgpu, self.resolution_factor);
 
-        self.global_group = Self::create_global_group(wgpu, &self.global_layout, &self.output, camera, &self.lds_buffer);
+        self.global_group = Self::create_global_group(wgpu, &self.global_layout, &self.output, camera, &self.lds_buffer, envmap);
 
         self.invalidate();
     }

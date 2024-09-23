@@ -7,7 +7,7 @@ use wgpu::util::DeviceExt;
 
 use crate::bvh::{self, BVHPrimitive, BVHTree};
 
-use crate::common::{Texture, WGPUContext};
+use crate::common::WGPUContext;
 
 // TODO: Benchmark best layout
 #[repr(C)]
@@ -71,8 +71,8 @@ pub enum MeshError {
     Gltf(gltf::Error),
     MissingPositions,
     MissingNormals,
-    MissingTexCoords,
     MissingIndices,
+    MissingTangents,
     NotTriangleList,
 }
 
@@ -88,8 +88,8 @@ impl std::fmt::Display for MeshError {
             MeshError::Gltf(e) => write!(f, "Gltf error: {}", e),
             MeshError::MissingPositions => write!(f, "Missing positions"),
             MeshError::MissingNormals => write!(f, "Missing normals"),
-            MeshError::MissingTexCoords => write!(f, "Missing texcoords"),
             MeshError::MissingIndices => write!(f, "Missing indices"),
+            MeshError::MissingTangents => write!(f, "Tangent generation is not yet supported"),
             MeshError::NotTriangleList => write!(f, "Not a triangle list"),
         }
     }
@@ -149,7 +149,11 @@ impl Scene {
 
                 let positions = reader.read_positions().ok_or(MeshError::MissingPositions)?;
                 let normals = reader.read_normals().ok_or(MeshError::MissingNormals)?;
-                let texcoords = reader.read_tex_coords(0).ok_or(MeshError::MissingTexCoords)?.into_f32();
+
+                let texcoords: &mut dyn Iterator<Item = _> = match reader.read_tex_coords(0) {
+                    Some(t) => &mut t.into_f32(),
+                    None => &mut std::iter::repeat([0.0, 0.0]),
+                };
 
                 let start_vertex = self.vertices.len() as u32;
                 let start_index = self.indices.len() as u32;
@@ -169,7 +173,7 @@ impl Scene {
                     self.indices.extend(indices.map(|i| i + start_vertex));
                 } else {
                     // TODO: Generate tangents using mikktspace
-                    unimplemented!("Tangent generation not yet supported");
+                    return Err(MeshError::MissingTangents);
                 }
 
                 geometry_map.insert((mesh.index(), primitive.index()) , start_index..self.indices.len() as u32);
@@ -336,10 +340,6 @@ impl SceneBuffers {
             }
         );
 
-        // TODO: Get skyboxes from git repo
-        let skybox = Texture::create_cubemap(wgpu, include_bytes!("../assets/kloppenheim_06.dds"));
-        // let skybox = Texture::create_cubemap(wgpu, include_bytes!("../assets/autumn_field.dds"));
-
         let layout = wgpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("BVH Bind Group Layout"),
             entries: &[
@@ -393,22 +393,6 @@ impl SceneBuffers {
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::Cube,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
             ],
         });
 
@@ -455,14 +439,6 @@ impl SceneBuffers {
                         offset: 0,
                         size: None,
                     }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: wgpu::BindingResource::TextureView(skybox.view()),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: wgpu::BindingResource::Sampler(skybox.sampler()),
                 },
             ],
         });
