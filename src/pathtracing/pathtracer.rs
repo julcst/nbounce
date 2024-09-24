@@ -29,7 +29,7 @@ pub struct Globals {
     pub sample: u32,
     weight: f32,
     pub bounces: u32,
-    pub throughput: f32,
+    pub contribution_factor: f32,
 }
 
 impl Default for Globals {
@@ -38,7 +38,7 @@ impl Default for Globals {
             sample: 0,
             weight: 0.0,
             bounces: 8,
-            throughput: 0.01,
+            contribution_factor: 4.0,
         }
     }
 }
@@ -132,7 +132,7 @@ impl Pathtracer {
                 range: 0..std::mem::size_of::<Globals>() as u32,
             }],
         });
-        
+
         let module = create_shader_module!(wgpu.device, "Pathtracer", "pathtracing.wgsl", "raytracing_sw.wgsl", "common.wgsl");
 
         let pipeline = wgpu.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {

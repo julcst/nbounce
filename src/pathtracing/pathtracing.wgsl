@@ -18,7 +18,7 @@ struct PushConstants {
     sample: u32,
     weight: f32,
     bounces: u32,
-    throughput: f32,
+    contribution_factor: f32,
 };
 
 var<push_constant> c: PushConstants;
@@ -186,19 +186,26 @@ fn sample_rendering_eq(sample: u32, shift: vec4f, dir: Ray) -> vec3f {
         var wi: vec3f;
 
         // TODO: Importance Sample environment map
-        // TODO: Importance Sample
+
+        // TODO: Importance Sample using the complete BRDF
+        let F0 = mix(vec3f(0.04), hit.color.xyz, hit.metallic);
+        let specular_weight = luminance(F_SchlickApprox(dot(wo, n), F0));
+        let diffuse_weight = (1.0 - hit.metallic) * luminance(hit.color.xyz);
+
+        let p_specular = specular_weight / (specular_weight + diffuse_weight);
+        let p_diffuse = 1.0 - p_specular;
+
         // Precomputed texture for BRDF mean for importance sampling
-        if sobol_0.x < 0.5 { // Trowbridge-Reitz-Specular
+        if sobol_0.x < p_specular { // Trowbridge-Reitz-Specular
             let wm = sample_vndf_iso(sobol_0.yz, wo, alpha, n); // Sample microfacet normal after Trowbridge-Reitz VNDF
             wi = reflect(-wo, wm);
             let cosThetaD = dot(wo, wm); // = dot(wi, wm)
             let cosThetaI = dot(wi, n);
-            let F0 = mix(vec3f(0.04), hit.color.xyz, hit.metallic);
             let F = F_SchlickApprox(cosThetaD, F0);
             let LambdaL = Lambda_TrowbridgeReitz(cosThetaI, alpha2);
             let LambdaV = Lambda_TrowbridgeReitz(cosThetaO, alpha2);
             let specular = F * (1 + LambdaV) / (1 + LambdaL + LambdaV); // = F * (G2 / G1)
-            throughput *= specular * 2.0;
+            throughput *= specular / p_specular;
         } else { // Brent-Burley-Diffuse
             let tangent_to_world = build_tbn(n, hit.tangent.xyz);
             wi = tangent_to_world * sample_cosine_hemisphere(sobol_1.yz);
@@ -209,18 +216,15 @@ fn sample_rendering_eq(sample: u32, shift: vec4f, dir: Ray) -> vec3f {
             let response = (1 + (FD90 - 1) * pow(1 - cosThetaI, 5.0)) * (1 + (FD90 - 1) * pow(1 - cosThetaO, 5.0));
             // Note: We drop the 1.0 / PI prefactor
             let diffuse = (1 - hit.metallic) * hit.color.xyz * response;
-            throughput *= diffuse * 2.0;
+            throughput *= diffuse / p_diffuse;
         }
-        
-        // TODO: Debug zero throughput as this is wasted computation
-        // if all(throughput <= vec3f(0)) { return vec3f(1,0,1); }
 
         // Unbiased Russian Roulette path termination for c.bounce > 3
         // Start with 1.0 for first 3 bounces then gradually decrease to 0.0
         var p_continue = min(1.0 - pow((f32(bounce) - 3.0) / f32(c.bounces), 5.0), 1.0);
 
         // Terminate also if the perceived throughput becomes too low
-        p_continue *= min(luminance(throughput) * 10.0, 1.0);
+        p_continue *= min(luminance(throughput) * c.contribution_factor, 1.0);
 
         if sobol_0.z < p_continue {
             throughput /= p_continue;

@@ -117,19 +117,24 @@ impl App for MainApp {
                     self.window.inner_size().width,
                     self.window.inner_size().height));
         });
-        
+
         ui.window("Settings")
             .size([1.0, 1.0], imgui::Condition::FirstUseEver)
             .always_auto_resize(true)
             .build(|| {
                 ui.text(format!("Sample {}/{}", self.pathtracer.sample_count(), self.pathtracer.max_sample_count));
                 if ui.slider("Res", 0.1, 1.0, &mut self.pathtracer.resolution_factor) {
+                    self.pathtracer.resize(&self.wgpu);
                     self.pathtracer.update(&self.wgpu, &self.camera, &self.envmap);
                     self.fullscreen_renderer.set_texture(&self.wgpu, self.pathtracer.output_texture());
                 }
                 let mut updated = false;
                 updated |= ui.slider("Bounces", 0, 32, &mut self.pathtracer.globals.bounces);
-                updated |= ui.slider("Throughput", 0.0, 1.0, &mut self.pathtracer.globals.throughput);
+                let mut contribution_filtering = 1.0 / self.pathtracer.globals.contribution_factor;
+                if ui.slider("Contribution Filtering", 0.0, 1.0, &mut contribution_filtering) {
+                    self.pathtracer.globals.contribution_factor = 1.0 / contribution_filtering;
+                    updated = true;
+                }
                 if updated { self.pathtracer.invalidate(); }
                 if ui.combo("Scene", &mut self.scene_index, &self.scenes, |x| x.to_string_lossy()) {
                     let mut scene_data = Scene::default();
