@@ -49,3 +49,23 @@ fn luminance(linear_rgb: vec3f) -> f32 {
 fn mat3(m: mat4x4f) -> mat3x3f {
     return mat3x3f(m[0].xyz, m[1].xyz, m[2].xyz);
 }
+
+/// Reorthogonalizes a tangent space using the Gram-Schmidt process and returns an orthonormal tangent space matrix
+/// Note: n needs to be normalized and t must be linearly independent from n
+fn build_tbn(n: vec3f, t: vec3f) -> mat3x3f {
+    let nt = normalize(t - dot(t, n) * n);
+    let b = cross(n, nt);
+    return mat3x3f(nt, b, n);
+}
+
+/// Builds an orthogonal tangent space to world space matrix from a normalized normal
+fn build_tbn_from_normal(n: vec3f) -> mat3x3f {
+    var t: vec3f;
+    if abs(n.y) > 0.99 {
+        t = normalize(cross(n, vec3f(1.0, 0.0, 0.0)));
+    } else {
+        t = normalize(cross(n, vec3f(0.0, 1.0, 0.0)));
+    }
+    let b = cross(n, t);
+    return mat3x3f(t, b, n);
+}
