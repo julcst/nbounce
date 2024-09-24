@@ -185,12 +185,15 @@ fn sample_rendering_eq(sample: u32, shift: vec4f, dir: Ray) -> vec3f {
         let cosThetaO = dot(wo, n);
         var wi: vec3f;
 
+        let metallic = hit.metallic;
+        let albedo = hit.color.xyz;
+
         // TODO: Importance Sample environment map
 
         // TODO: Importance Sample using the complete BRDF
-        let F0 = mix(vec3f(0.04), hit.color.xyz, hit.metallic);
+        let F0 = mix(vec3f(0.04), albedo, metallic);
         let specular_weight = luminance(F_SchlickApprox(dot(wo, n), F0));
-        let diffuse_weight = (1.0 - hit.metallic) * luminance(hit.color.xyz);
+        let diffuse_weight = (1.0 - metallic) * luminance(albedo);
 
         let p_specular = specular_weight / (specular_weight + diffuse_weight);
         let p_diffuse = 1.0 - p_specular;
@@ -215,13 +218,13 @@ fn sample_rendering_eq(sample: u32, shift: vec4f, dir: Ray) -> vec3f {
             let FD90 = 0.5 + 2 * alpha * pow(cosThetaD, 2.0);
             let response = (1 + (FD90 - 1) * pow(1 - cosThetaI, 5.0)) * (1 + (FD90 - 1) * pow(1 - cosThetaO, 5.0));
             // Note: We drop the 1.0 / PI prefactor
-            let diffuse = (1 - hit.metallic) * hit.color.xyz * response;
+            let diffuse = (1 - metallic) * albedo * response;
             throughput *= diffuse / p_diffuse;
         }
 
-        // Unbiased Russian Roulette path termination for c.bounce > 3
-        // Start with 1.0 for first 3 bounces then gradually decrease to 0.0
-        var p_continue = min(1.0 - pow((f32(bounce) - 3.0) / f32(c.bounces), 5.0), 1.0);
+        // Unbiased Russian Roulette path termination
+        // Start with 1.0 then gradually decrease to 0.0
+        var p_continue = min(1.0 - pow(f32(bounce) / f32(c.bounces), 8.0), 1.0);
 
         // Terminate also if the perceived throughput becomes too low
         p_continue *= min(luminance(throughput) * c.contribution_factor, 1.0);

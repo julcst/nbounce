@@ -131,7 +131,7 @@ impl App for MainApp {
                 let mut updated = false;
                 updated |= ui.slider("Bounces", 0, 32, &mut self.pathtracer.globals.bounces);
                 let mut contribution_filtering = 1.0 / self.pathtracer.globals.contribution_factor;
-                if ui.slider("Contribution Filtering", 0.0, 1.0, &mut contribution_filtering) {
+                if ui.slider("Filtering", 0.0, 1.0, &mut contribution_filtering) {
                     self.pathtracer.globals.contribution_factor = 1.0 / contribution_filtering;
                     updated = true;
                 }
