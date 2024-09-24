@@ -1,6 +1,7 @@
 const COMPUTE_SIZE: u32 = 8u;
-const PI: f32 = 3.14159265359;
-const TWO_PI: f32 = 2.0 * PI;
+const LDS_PER_BOUNCE: u32 = 2u;
+// TODO: Move to a push constant
+const LDS_STRIDE = 8 * LDS_PER_BOUNCE + 1u;
 
 struct CameraData {
     world_to_clip: mat4x4f,
@@ -37,10 +38,6 @@ fn generate_ray(id: vec3u, rand: vec2f) -> Ray {
     let dir = pos - world_dir.xyz / world_dir.w;
 
     return Ray(pos, dir, 1.0 / dir);
-}
-
-fn mat3(m: mat4x4f) -> mat3x3f {
-    return mat3x3f(m[0].xyz, m[1].xyz, m[2].xyz);
 }
 
 /// Sample visible normal distribution function using the algorithm
@@ -86,10 +83,10 @@ fn sample_vndf_iso(rand: vec2f, wi: vec3f, alpha: f32, n: vec3f) -> vec3f {
     let cStd = vec3(x, y, z);
     // Reflect sample to align with normal
     let up = vec3f(0, 0, 1);
-    var wr = n + up;
+    let wr = n + up;
     // Prevent division by zero
-    if wr.z == 0.0 { wr.z = 0.0000001; } // TODO: Find better solution for this
-    let c = dot(wr, cStd) * wr / wr.z - cStd;
+    let safe_wrz = max(wr.z, 1e-6);
+    let c = dot(wr, cStd) * wr / safe_wrz - cStd;
     // Compute halfway direction as standard normal
     let wmStd = c + wiStd;
     let wmStd_z = n * dot(n, wmStd);
@@ -107,49 +104,18 @@ fn sample_cosine_hemisphere(rand: vec2f) -> vec3f {
     return vec3f(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
 }
 
-fn hash2u(s: vec2u) -> vec2u {
-    var v = s * 1664525u + 1013904223u;
-    v.x += v.y * 1664525u; v.y += v.x * 1664525u;
-    v ^= v >> vec2u(16u);
-    v.x += v.y * 1664525u; v.y += v.x * 1664525u;
-    v ^= v >> vec2u(16u);
-    return v;
-}
-
-fn hash4u(s: vec4u) -> vec4u {
-    var v = s * 1664525u + 1013904223u;
-    v.x += v.y * v.w; v.y += v.z * v.x; v.z += v.x * v.y; v.w += v.y * v.z;
-    v ^= v >> vec4u(16u);
-    v.x += v.y * v.w; v.y += v.z * v.x; v.z += v.x * v.y; v.w += v.y * v.z;
-    return v;
-}
-
-/// Maps a random u32 to a random float in [0,1), see https://blog.bithole.dev/blogposts/random-float/
-fn map4f(x: vec4u) -> vec4f {
-    return bitcast<vec4f>((x >> vec4u(9u)) | vec4u(0x3F800000u)) - 1.0;
-}
-
-/// Maps a random u32 to a random float in [0,1), see https://blog.bithole.dev/blogposts/random-float/
-fn map2f(x: vec2u) -> vec2f {
-    return bitcast<vec2f>((x >> vec2u(9u)) | vec2u(0x3F800000u)) - 1.0;
-}
-
-/**
- * Schlick's approximation for the Fresnel term (see https://en.wikipedia.org/wiki/Schlick%27s_approximation).
- * The Fresnel term describes how light is reflected at the surface.
- * For conductors the reflection coefficient R0 is chromatic, for dielectrics it is achromatic.
- * R0 = ((n1 - n2) / (n1 + n2))^2 with n1, n2 being the refractive indices of the two materials.
- * We can set n1 = 1.0 (air) and n2 = IoR of the material.
- * Most dielectrics have an IoR near 1.5 => R0 = ((1 - 1.5) / (1 + 1.5))^2 = 0.04.
- */
+/// Schlick's approximation for the Fresnel term (see https://en.wikipedia.org/wiki/Schlick%27s_approximation).
+/// The Fresnel term describes how light is reflected at the surface.
+/// For conductors the reflection coefficient R0 is chromatic, for dielectrics it is achromatic.
+/// R0 = ((n1 - n2) / (n1 + n2))^2 with n1, n2 being the refractive indices of the two materials.
+/// We can set n1 = 1.0 (air) and n2 = IoR of the material.
+/// Most dielectrics have an IoR near 1.5 => R0 = ((1 - 1.5) / (1 + 1.5))^2 = 0.04.
 fn F_SchlickApprox(HdotV: f32, R0: vec3f) -> vec3f {
     return R0 + (1.0 - R0) * pow(1.0 - HdotV, 5.0);
 }
 
-/**
- * Lambda for the Trowbridge-Reitz NDF
- * Measures invisible masked microfacet area per visible microfacet area.
- */
+/// Lambda for the Trowbridge-Reitz NDF
+/// Measures invisible masked microfacet area per visible microfacet area.
 fn Lambda_TrowbridgeReitz(NdotV: f32, alpha2: f32) -> f32 {
     let cosTheta = NdotV;
     let cos2Theta = cosTheta * cosTheta;
@@ -158,18 +124,14 @@ fn Lambda_TrowbridgeReitz(NdotV: f32, alpha2: f32) -> f32 {
     return (-1.0 + sqrt(1.0 + alpha2 * tan2Theta)) / 2.0;
 }
 
-/**
- * Smith's shadowing-masking function for the Trowbridge-Reitz NDF.
- */
+/// Smith's shadowing-masking function for the Trowbridge-Reitz NDF.
 fn G2_TrowbridgeReitz(NdotL: f32, NdotV: f32, alpha2: f32) -> f32 {
     let lambdaL = Lambda_TrowbridgeReitz(NdotL, alpha2);
     let lambdaV = Lambda_TrowbridgeReitz(NdotV, alpha2);
     return 1.0 / (1.0 + lambdaL + lambdaV);
 }
 
-/**
- * Smith's shadowing-masking function for the Trowbridge-Reitz NDF.
- */
+/// Smith's shadowing-masking function for the Trowbridge-Reitz NDF.
 fn G1_TrowbridgeReitz(NdotV: f32, alpha2: f32) -> f32 {
     let lambdaV = Lambda_TrowbridgeReitz(NdotV, alpha2);
     return 1.0 / (1.0 + lambdaV);
@@ -182,21 +144,16 @@ fn build_tbn(hit: HitInfo) -> mat3x3f {
     return mat3x3f(t, b, n);
 }
 
-const LDS_PER_BOUNCE: u32 = 2u;
-
 /// Takes a precomputed Sobol-Burley sample and performs a Cranly-Patterson-Rotation with a per pixel shift.
 /// For each sample the precomputed Sobol-Burley array contains first one vec4f for lens and pixel sampling 
 /// and then two vec4f for each bounce.
 fn sample_sobol_burley_bounce(i: u32, bounce: u32, shift: vec4f, dim: u32) -> vec4f {
-    // TODO: Move to a push constant
-    let lds_stride = c.bounces * LDS_PER_BOUNCE + 1u;
-    let sample = sobol_burley[i * lds_stride + 1u + bounce * LDS_PER_BOUNCE + dim];
+    let sample = sobol_burley[i * LDS_STRIDE + 1u + bounce * LDS_PER_BOUNCE + dim];
     return fract(sample + shift);
 }
 
 fn sample_sobol_burley_extra(i: u32, shift: vec4f) -> vec4f {
-    let lds_stride = c.bounces * LDS_PER_BOUNCE + 1u;
-    let sample = sobol_burley[i * lds_stride];
+    let sample = sobol_burley[i * LDS_STRIDE];
     return fract(sample + shift);
 }
 
@@ -230,8 +187,9 @@ fn sample_rendering_eq(sample: u32, shift: vec4f, dir: Ray) -> vec3f {
 
         // TODO: Importance Sample environment map
         // TODO: Importance Sample
+        // Precomputed texture for BRDF mean for importance sampling
         if sobol_0.x < 0.5 { // Trowbridge-Reitz-Specular
-            let wm = sample_vndf_iso(sobol_0.yz, wo, alpha, N); // Sample microfacet normal after Trowbridge-Reitz VNDF // FIXME: NaNs
+            let wm = sample_vndf_iso(sobol_0.yz, wo, alpha, N); // Sample microfacet normal after Trowbridge-Reitz VNDF
             wi = reflect(-wo, wm);
             let cosThetaD = dot(wo, wm); // = dot(wi, wm)
             let cosThetaI = dot(wi, N);
@@ -243,7 +201,7 @@ fn sample_rendering_eq(sample: u32, shift: vec4f, dir: Ray) -> vec3f {
             throughput *= specular * 2.0;
         } else { // Brent-Burley-Diffuse
             // FIXME: artifact at tangent seam
-            wi = normalize(tangent_to_world * sample_cosine_hemisphere(sobol_1.xy));
+            wi = normalize(tangent_to_world * sample_cosine_hemisphere(sobol_1.yz));
             let wm = normalize(wi + wo); // Microfacect normal is the half vector
             let cosThetaD = dot(wi, wm); // = dot(wo, wm)
             let cosThetaI = dot(wi, N);
@@ -263,10 +221,6 @@ fn sample_rendering_eq(sample: u32, shift: vec4f, dir: Ray) -> vec3f {
     return vec3f(0.0);
 }
 
-fn luminance(linear_rgb: vec3f) -> f32 {
-    return dot(vec3f(0.2126, 0.7152, 0.0722), linear_rgb);
-}
-
 @compute
 @workgroup_size(COMPUTE_SIZE, COMPUTE_SIZE)
 fn main(@builtin(global_invocation_id) id: vec3u) {
@@ -276,7 +230,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     }
 
     // TODO: Read from texture
-    let shift = map4f(hash4u(vec4u(id.xyxy)));
+    let shift = hash4f(id.xyxy);
 
     let jitter = sample_sobol_burley_extra(c.sample, shift);
     let ray = generate_ray(id, jitter.xy);

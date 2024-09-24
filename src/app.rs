@@ -117,8 +117,7 @@ impl App for MainApp {
                     self.window.inner_size().width,
                     self.window.inner_size().height));
         });
-
-        // TODO: Add Scene+Skybox switching
+        
         ui.window("Settings")
             .size([1.0, 1.0], imgui::Condition::FirstUseEver)
             .always_auto_resize(true)

@@ -5,8 +5,9 @@ use glam::{uvec2, Vec3Swizzles, Vec4};
 use itertools::iproduct;
 use sobol_burley::sample_4d;
 use wgpu::util::DeviceExt;
-use wgpu::{PushConstantRange, ShaderModuleDescriptor};
+use wgpu::PushConstantRange;
 
+use crate::common::util::{create_shader_module, include_shaders};
 use crate::common::{CameraController, Texture, WGPUContext};
 use super::envmap::EnvMap;
 use super::scene::SceneBuffers;
@@ -131,13 +132,8 @@ impl Pathtracer {
                 range: 0..std::mem::size_of::<Globals>() as u32,
             }],
         });
-
-        // TODO: Maybe make unchecked in debug mode for performance
-        // TODO: Refactor into macro
-        let module = wgpu.device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("Pathtracing Shader"),
-            source: wgpu::ShaderSource::Wgsl((include_str!("pathtracing.wgsl").to_owned() + include_str!("raytracing_sw.wgsl")).into()),
-        });
+        
+        let module = create_shader_module!(wgpu.device, "Pathtracer", "pathtracing.wgsl", "raytracing_sw.wgsl", "common.wgsl");
 
         let pipeline = wgpu.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Raytracer Compute"),
@@ -215,7 +211,6 @@ impl Pathtracer {
 
     pub fn update(&mut self, wgpu: &WGPUContext, camera: &CameraController, envmap: &EnvMap) {
         self.global_group = Self::create_global_group(wgpu, &self.global_layout, &self.output, camera, &self.lds_buffer, envmap);
-
         self.invalidate();
     }
 
