@@ -214,8 +214,20 @@ fn sample_rendering_eq(sample: u32, shift: vec4f, dir: Ray) -> vec3f {
         
         // TODO: Debug zero throughput as this is wasted computation
         // if all(throughput <= vec3f(0)) { return vec3f(1,0,1); }
-        // TODO: Do unbiased Russian Roulette
-        if luminance(throughput) <= c.throughput { break; }
+
+        // Unbiased Russian Roulette path termination for c.bounce > 3
+        // Start with 1.0 for first 3 bounces then gradually decrease to 0.0
+        var p_continue = min(1.0 - pow((f32(bounce) - 3.0) / f32(c.bounces), 5.0), 1.0);
+
+        // Terminate also if the perceived throughput becomes too low
+        p_continue *= min(luminance(throughput) * 10.0, 1.0);
+
+        if sobol_0.z < p_continue {
+            throughput /= p_continue;
+        } else {
+            return vec3f(0.0);
+        }
+
         ray = Ray(hit.position, wi, 1.0 / wi);
     }
     return vec3f(0.0);
