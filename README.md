@@ -8,7 +8,7 @@ Thanks to [`wgpu`](https://crates.io/crates/wgpu), this implementation is fully 
 - [X] Software ray tracing using SAH-optimized BVH trees and Möller-Trumbore intersection tests
 - [ ] Hardware-accelerated ray tracing
 - [X] Random Quasi-Monte Carlo sampling with a precomputed Owen-scrambled Sobol sequence [[1]](#1) and per-pixel random Cranley-Patterson rotations using [`sobol_burley`](https://crates.io/crates/sobol_burley)
-- [X] Russian Roulette path termination
+- [X] Unbiased Russian Roulette path termination based on path length and perceived throughput luminance
 - [ ] Neural Radiance Caching [[4]](#4)
 - [X] Support for environment lighting and emissive materials
 - [ ] Texture and normal map support using [`ddsfile`](https://crates.io/crates/ddsfile)
