@@ -201,7 +201,7 @@ fn sample_rendering_eq(sample: u32, shift: vec4f, dir: Ray) -> vec3f {
             throughput *= specular * 2.0;
         } else { // Brent-Burley-Diffuse
             let tangent_to_world = build_tbn(n, hit.tangent.xyz);
-            wi = normalize(tangent_to_world * sample_cosine_hemisphere(sobol_1.yz));
+            wi = tangent_to_world * sample_cosine_hemisphere(sobol_1.yz);
             let wm = normalize(wi + wo); // Microfacect normal is the half vector
             let cosThetaD = dot(wi, wm); // = dot(wo, wm)
             let cosThetaI = dot(wi, n);
